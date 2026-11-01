@@ -1,93 +1,177 @@
-# Survillance Edge
+# VEYAKSH
 
+**See. Sense. Understand.**
+Edge-AI road-safety video analytics for Indian roads.
 
+VEYAKSH reads video from a camera (or a file), detects and tracks vehicles, flags unsafe events such as wrong-way driving, and shows them on a map. Video is processed where it is captured; only a small event record (about 1 KB of JSON, a plate crop and a short clip) is sent onward. Raw video is not uploaded or stored.
 
-## Getting started
+We are building the **software layer first**, on a laptop. Hardware (Jetson / Hailo box) comes later, after benchmarking and after the first customer pilot.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+---
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## 1. The big picture
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/veyaksh-group1/survillance-edge.git
-git branch -M main
-git push -uf origin main
+Camera / video file / RTSP
+        |
+        v
+  M1 Ingest  ->  M2 Detect + Track  ->  M3 Event engine  ->  M4 ANPR  ->  M5 Edge agent
+   frames          objects with IDs        events             plate         JSON + clip
+                                              ^                              |
+                                              |                              v
+                                 zone config (M7 writes it)          M6 Backend + Dashboard
+                                                                      (database, map, alert)
 ```
 
-## Integrate with your tools
+Modules talk to each other **only through two contracts**:
+- `schema/event.schema.json`: the shape of an event.
+- `configs/zones/<cam_id>.json`: lanes, allowed direction and no-park zones for a camera.
 
-* [Set up project integrations](https://gitlab.com/veyaksh-group1/survillance-edge/-/settings/integrations)
+Because of this, each person can build and test their module alone. Do not change a contract without discussing it first.
 
-## Collaborate with your team
+---
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## 2. One example, end to end
 
-## Test and Deploy
+A two-wheeler enters the junction against the flow of traffic.
 
-Use the built-in continuous integration in GitLab.
+1. **M1** pulls the frame from the camera and keeps the last few seconds in a buffer.
+2. **M2** sees "a two-wheeler at this position" and gives it ID 41. In the next frames it stays ID 41 and we get its path.
+3. **M3** reads the zone config. Lane Z1 allows travel at 90 degrees; ID 41 is moving at about 270 degrees for several frames. It emits a `wrong_way` event.
+4. **M4** crops the number plate from the event frame and reads it: `UK08XXXX`, 71 percent confidence.
+5. **M5** packs the event JSON, the plate image and the short clip, and sends them to the backend. If the network is down it queues and retries. Raw video is deleted.
+6. **M6** stores the event. On the dashboard map, the junction blinks red; clicking it plays the clip.
+7. **M7** is what created the zone config in the first place, by letting someone draw the lane on a camera frame.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+---
 
-***
+## 3. Modules in detail
 
-# Editing this README
+### M1: Ingest
+**What it does:** gets frames from any source and keeps a short rolling video buffer.
+**Input:** RTSP URL, video file, USB or phone camera.
+**Output:** a stream of frames (with timestamps) and the last 3 to 5 seconds of video, so an event can save a clip of what just happened.
+**Why it exists:** every other module should not care where video comes from. Swapping a file for a real camera must be a config change, not a code change.
+**Tech:** OpenCV, GStreamer, ffmpeg, MediaMTX (to fake an RTSP stream from a file).
+**Week 1:** read a video file and print frame count; loop a video as a fake RTSP stream and read it. If MediaMTX blocks you, read the file directly and report it.
+**Done when:** the same code reads both a file and an RTSP URL.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### M2: Detect + Track
+**What it does:** finds vehicles and people in each frame and follows each one with a stable ID.
+**Input:** frames from M1.
+**Output:** for each frame, a list of objects: `track_id`, `class`, `bbox` (box position).
+**Why it exists:** events are about behaviour over time (direction, dwell). That needs identity, not just per-frame detection.
+**Tech:** YOLO11n for detection, ByteTrack for tracking. Export the model to ONNX early so it can later move to TensorRT (Jetson) or Hailo without a rewrite. Keep inference behind one function, `detect(frame) -> boxes`.
+**Week 1:** run on the test video, save an overlay video (boxes + IDs), and list where Indian traffic breaks it (auto-rickshaw, e-rickshaw, cart, two-wheeler).
+**Done when:** overlay video exists and a failure list is written in `DECISIONS.md`.
 
-## Suggestions for a good README
+### M3: Event engine (rule plugins)
+**What it does:** turns tracks plus zone config into events.
+**Input:** tracks from M2 and the zone config.
+**Output:** events matching `schema/event.schema.json`.
+**Why it exists:** this is the "intelligence". Each feature is one small file in `m3_events/rules/` with one function: `evaluate(tracks, zones) -> list of events`. New features are new files, not a rewrite.
+**Rules, in planned order:**
+- `wrong_way`: movement direction is outside the lane's allowed direction (plus tolerance) for N frames.
+- `encroachment`: a vehicle stays in a no-park zone longer than the allowed dwell time.
+- Later: stalled vehicle, stray animal, vehicle count and congestion, helmet and triple riding, accident (first version only raises a "possible incident" for a human to confirm).
+**Week 1:** first a hardcoded wrong-way rule, then drive it from the zone config.
+**Done when:** the golden test clip produces the expected wrong-way event, and no event where there should be none.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### M4: ANPR (number plate reading)
+**What it does:** finds the plate on an event frame and reads its text.
+**Input:** the event frame and the vehicle's box.
+**Output:** `plate.text`, `plate.conf`, and a plate crop image. The plate can be null; an event without a plate is still valid.
+**Why it exists:** a plate makes an event actionable for authorities. We do not issue challans; we provide evidence and a plate feed.
+**Tech:** a plate detector plus an open-source OCR.
+**Week 1:** spike only. Measure the read rate on Indian plates and the minimum plate width in pixels needed for a reliable read. That tells us the camera resolution and angle we require. Decision on Nov 7: M4 is v1 or v2.
+**Done when:** the numbers and the decision are in `DECISIONS.md`.
 
-## Name
-Choose a self-explaining name for your project.
+### M5: Edge agent
+**What it does:** packages events and sends them to the backend reliably.
+**Input:** event, plate image, clip from M3, M4 and M1.
+**Output:** an HTTPS POST to the backend; a local retry queue; raw clips purged after sending.
+**Why it exists:** field networks drop. The device must not lose events and must not keep video.
+**Tech:** Python, a small SQLite queue.
+**Week 1:** build event to JSON, plate crop and clip save, POST to the backend, retry on failure.
+**Done when:** with the backend stopped, events queue; once it is back, they arrive.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### M6: Backend + Dashboard
+**What it does:** receives events, stores them, and shows them on a map.
+**Input:** event JSON, plate image, clip.
+**Output:** database rows; a Leaflet map where the node blinks red on a new event; click opens the clip.
+**Why it exists:** the operator should not watch 1000 video screens. The dashboard stays quiet until something happens.
+**Tech:** FastAPI, SQLite (Postgres later), Leaflet + OpenStreetMap.
+**Week 1:** `POST /events` and `GET /events`, then a map that shows each event as a point with a red blink and a clip view.
+**Done when:** a posted event appears on the map and its clip plays.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### M7: Calibration tool
+**What it does:** lets a person draw lanes, set the allowed direction, and mark no-park polygons on a camera frame, then writes the zone config.
+**Input:** one frame from a camera.
+**Output:** `configs/zones/<cam_id>.json`.
+**Why it exists:** every camera sees a different road. Hand-writing coordinates does not scale beyond a pilot.
+**Week 1:** **not built.** We write the config by hand (see `configs/zones/C2.json`). Planned for Week 3 or later; whoever is free picks it up.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## 4. Event and zone formats
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Event (`schema/event.schema.json`):
+```json
+{
+  "node_id": "N01", "cam_id": "C2", "ts": "2026-11-05T10:22:31+05:30",
+  "type": "wrong_way", "track_id": 41, "class": "two_wheeler", "conf": 0.87,
+  "zone_id": "Z1",
+  "plate": {"text": "UK08XXXX", "conf": 0.71, "img": "p_41.jpg"},
+  "clip": "c_41.mp4"
+}
+```
+`type`: `wrong_way`, `encroachment`.
+`class`: `car`, `two_wheeler`, `auto`, `e_rickshaw`, `cart`, `pedestrian`, `other`.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Zone config (`configs/zones/C2.json`) holds lane polygons with `allowed_dir_deg` and `tol_deg`, and no-park polygons with `max_dwell_s`.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+---
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## 5. Week 1 plan (Nov 1 to 8)
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+| Day | Focus |
+|---|---|
+| Sun Nov 1 | Repo, contracts, environments |
+| Mon Nov 2 | M2 runs on a clip; M6 endpoint up; M1 reads a file |
+| Tue Nov 3 | M2 overlay video; M1 RTSP; M6 endpoint stores events; ANPR spike starts |
+| Wed Nov 4 | Golden test clip chosen and labelled; zone config for C2; M6 map |
+| Thu Nov 5 | First end-to-end demo with a hardcoded wrong-way rule |
+| Fri Nov 6 | Rule driven by zone config; clip view; retry queue |
+| Sat Nov 7 | Precision/recall, FPS and latency table; ANPR decision |
+| Sun Nov 8 | Update this doc with real numbers; plan Week 2 |
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+**Not in v1:** e-challan generation, emergency-vehicle signal override, siren detection, fleet management, over-the-air updates.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
-## License
-For open source projects, say how it is licensed.
+## 6. Working rules
+- `main` always runs. One branch per module (`m2/<topic>`); merge through a merge request.
+- No merge to `main` unless the module ran on the golden test clip (`data/golden/`).
+- Every spike ends with an entry in `DECISIONS.md`: what you tried, the number, the decision.
+- Daily standup at 10:30: done, next, blocked. Push by 6 PM. Escalate any blocker over 30 minutes.
+- `schema/` and `configs/zones/` are contracts. Change them only after discussion.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 7. Quick start
+```
+python -m venv .venv
+.venv\Scripts\activate          # Windows;  Mac/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python m2_detect_track/track_demo.py data/test.mp4
+uvicorn m6_backend.main:app --reload
+```
+
+## 8. Repo layout
+```
+docs/architecture.md     full architecture and Week 1 definition of done
+DECISIONS.md             log of experiments and decisions
+schema/                  event contract
+configs/zones/           per-camera zone configs
+data/golden/             golden test clip and labels
+m1_ingest/ ... m6_dashboard/   one folder per module
+scripts/run_pipeline.py  single entry point, wired up as modules land
+``` 
