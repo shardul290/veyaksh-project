@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 events.sqlite3
+*.db
 assets/rtsp_inputs/*
 !assets/rtsp_inputs/.gitkeep
 
@@ -12,6 +13,7 @@ assets/rtsp_inputs/*
 *.avi
 *.mkv
 *.webm
+!m6_backend/media/synthetic_demo_clip.mp4
 
 # Local datasets and extraction output
 assets/extracted_frames/
