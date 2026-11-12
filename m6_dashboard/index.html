@@ -6,6 +6,7 @@
   <title>VEYAKSH Traffic Dashboard</title>
   <meta name="theme-color" content="#f3f6f8">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <style>
     :root {
       color-scheme: light;
@@ -45,8 +46,10 @@
     main { max-width: 1200px; margin: auto; padding: 26px clamp(16px, 4vw, 44px) 56px; }
     .bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 25px; }
     .bar p { margin: 0; color: #536780; font-size: 14px; }
-    #summary { display: inline-flex; align-items: center; gap: 9px; }
-    #summary::before { width: 8px; height: 8px; content: ""; border-radius: 50%; background: #4ade80; box-shadow: 0 0 13px #4ade8088; }
+    #api-status { display: inline-flex; align-items: center; gap: 9px; }
+    #api-status::before { width: 8px; height: 8px; content: ""; border-radius: 50%; background: #9a6b1d; }
+    #api-status[data-state="connected"]::before { background: #34805a; }
+    #api-status[data-state="error"]::before { background: #b43e50; }
     button { border: 1px solid #9db5bd; border-radius: 5px; background: #fff; color: #174f5c; padding: 10px 15px; font-weight: 650; cursor: pointer; }
     button:hover { border-color: #176b78; background: #f7fbfc; }
     button:focus-visible, a:focus-visible { outline: 3px solid #3c91a0; outline-offset: 2px; }
@@ -64,6 +67,53 @@
     h2 { display: flex; align-items: center; gap: 10px; margin: 32px 0 13px; font-size: 17px; letter-spacing: -.015em; }
     h2::before { width: 3px; height: 18px; content: ""; border-radius: 1px; background: #247b86; }
     .table-wrap { overflow-x: auto; padding: 4px 14px; }
+    .live-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, .85fr); gap: 16px; align-items: stretch; }
+    .map-panel { min-width: 0; padding: 14px; }
+    .map-panel h3, .latest-panel h3 { margin: 2px 0 4px; color: #243b55; font-size: 16px; }
+    .map-panel .muted, .latest-panel .muted { margin: 0 0 12px; }
+    #map { width: 100%; height: 470px; border: 1px solid #d4dfe4; border-radius: 6px; background: #e7edf0; }
+    .leaflet-container { font: 13px "Segoe UI", Arial, sans-serif; }
+    .leaflet-control-attribution { color: #334155 !important; background: rgba(255,255,255,.92) !important; }
+    .map-note { margin: 10px 2px 0; color: #61717e; font-size: 12px; }
+    .map-note a { color: #245f6b; }
+    .latest-panel { min-width: 0; display: flex; flex-direction: column; padding: 16px; }
+    .latest-list { min-height: 0; max-height: 470px; margin: 4px -4px 0 0; padding: 0 8px 0 0; overflow-y: auto; list-style: none; }
+    .latest-item { padding: 0; border-bottom: 1px solid #e0e7eb; }
+    .latest-item:last-child { border-bottom: 0; }
+    .event-open { display: block; width: 100%; padding: 13px 5px; border: 0; border-radius: 3px; background: transparent; color: inherit; text-align: left; }
+    .event-open:hover { border-color: transparent; background: #f0f6f7; }
+    .event-open:focus-visible { outline-offset: -2px; }
+    .event-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    .event-heading strong { color: #243b55; font-size: 14px; }
+    .event-time { color: #687b95; font-size: 12px; text-align: right; }
+    .event-details { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; margin: 9px 0 0; }
+    .event-details div { min-width: 0; }
+    .event-details dt { color: #687b95; font-size: 11px; }
+    .event-details dd { margin: 1px 0 0; color: #2e4058; font-size: 13px; overflow-wrap: anywhere; }
+    .empty-events { margin: 16px 2px; color: #61717e; font-size: 14px; }
+    .event-controls { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin: 8px 0 7px; }
+    .event-controls label { color: #536780; font-size: 13px; }
+    select { min-height: 38px; padding: 7px 30px 7px 10px; border: 1px solid #b8c8cf; border-radius: 4px; background: #fff; color: #203149; font: inherit; }
+    .sound-state { color: #687b95; font-size: 12px; }
+    dialog { width: min(520px, calc(100% - 32px)); max-height: min(85vh, 760px); padding: 0; border: 1px solid #c9d5db; border-radius: 8px; color: #203149; background: #fff; box-shadow: 0 18px 60px rgba(23, 46, 66, .25); }
+    dialog::backdrop { background: rgba(22, 39, 52, .48); }
+    .dialog-content { padding: 22px; }
+    .dialog-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .dialog-heading h3 { margin: 0; font-size: 19px; }
+    .dialog-heading button { padding: 6px 10px; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 20px 0; }
+    .detail-grid dt { color: #687b95; font-size: 12px; }
+    .detail-grid dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+    .plate-preview { display: block; max-width: 100%; max-height: 250px; margin: 0 auto 18px; border: 1px solid #d5dfe4; border-radius: 4px; object-fit: contain; }
+    .plate-preview[hidden] { display: none; }
+    .plate-empty { margin: 0 0 18px; padding: 18px 14px; border: 1px dashed #b8c8cf; border-radius: 4px; color: #536780; background: #f5f8f9; font-size: 13px; text-align: center; }
+    .media-links { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+    .media-links a { color: #245f6b; font-weight: 650; }
+    .media-missing { color: #687b95; font-size: 13px; }
+    .node-marker { background: transparent; border: 0; }
+    .node-pin { display: block; width: 20px; height: 20px; border: 3px solid #fff; border-radius: 50%; background: #176b78; box-shadow: 0 1px 5px rgba(25, 47, 60, .55); }
+    .node-marker.is-alert .node-pin { background: #c62828; animation: node-event-blink .5s steps(2, end) 6; }
+    @keyframes node-event-blink { to { background: #176b78; opacity: .55; } }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 13px 12px; border-bottom: 1px solid rgba(111, 137, 173, .14); text-align: left; white-space: nowrap; font-size: 13px; }
     th { color: #657892; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
@@ -82,7 +132,8 @@
     footer { max-width: 1200px; margin: 0 auto; padding: 18px clamp(16px, 4vw, 44px) 30px; border-top: 1px solid #d6dfe4; color: #61717e; font-size: 13px; }
     footer nav { display: flex; gap: 18px; flex-wrap: wrap; }
     footer a { color: #245f6b; }
-    @media (max-width: 560px) { header { padding-top: 25px; padding-bottom: 23px; } .table-wrap { padding: 0 8px; } th, td { padding: 11px 9px; } }
+    @media (max-width: 860px) { .live-layout { grid-template-columns: 1fr; } #map { height: 390px; } .latest-list { max-height: 360px; } }
+    @media (max-width: 560px) { header { padding-top: 25px; padding-bottom: 23px; } .table-wrap { padding: 0 8px; } th, td { padding: 11px 9px; } #map { height: 330px; } }
   </style>
 </head>
 <body>
@@ -91,58 +142,344 @@
       <div class="brand-mark" aria-hidden="true">V</div>
       <div>
         <h1>VEYAKSH Traffic Dashboard</h1>
-        <p>Event records, registered camera nodes, and sample media</p>
+        <p>Camera locations and recent traffic events</p>
       </div>
     </div>
   </header>
   <main>
-    <div class="bar"><p id="summary">Loading dashboard data…</p><button id="refresh" type="button">Refresh</button></div>
+    <div class="bar"><p id="api-status" data-state="loading" aria-live="polite">Connecting to API</p><button id="check-now" type="button">Check now</button></div>
     <p class="status" id="error" role="status"></p>
-    <h2>Nodes</h2>
-    <section class="grid" id="nodes" aria-live="polite"></section>
-    <h2>Recent events</h2>
-    <section class="panel table-wrap">
-      <table><thead><tr><th>ID</th><th>Time</th><th>Type</th><th>Node</th><th>Class</th><th>Plate</th><th>Clip</th></tr></thead>
-      <tbody id="events"></tbody></table>
+    <h2>Live map and events</h2>
+    <section class="live-layout" aria-label="Live node map and recent events">
+      <section class="panel map-panel" aria-labelledby="map-heading">
+        <h3 id="map-heading">Camera nodes</h3>
+        <p class="muted">Node coordinates are placeholders near IIT Roorkee.</p>
+        <div id="map" role="application" aria-label="Map with one marker for each camera node"></div>
+        <p class="map-note">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>. <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noreferrer">Report a map issue</a>.</p>
+      </section>
+      <aside class="panel latest-panel" aria-labelledby="events-heading">
+        <h3 id="events-heading">Latest events</h3>
+        <p class="muted">Checks the API every 2 seconds.</p>
+        <div class="event-controls">
+          <label for="event-type-filter">Event type</label>
+          <select id="event-type-filter">
+            <option value="all">All types</option>
+            <option value="wrong_way">Wrong way</option>
+            <option value="encroachment">Encroachment</option>
+          </select>
+          <button id="enable-sound" type="button" aria-pressed="false">Enable sound</button>
+          <span class="sound-state" id="sound-state" aria-live="polite">Sound off</span>
+        </div>
+        <ol class="latest-list" id="latest-events" aria-live="polite"></ol>
+      </aside>
     </section>
-    <h2>Sample pictures and clip</h2>
+    <dialog id="event-dialog" aria-labelledby="event-dialog-title">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <h3 id="event-dialog-title">Event details</h3>
+          <button id="close-event-dialog" type="button" aria-label="Close event details">Close</button>
+        </div>
+        <dl class="detail-grid" id="event-detail-fields"></dl>
+        <img class="plate-preview" id="event-plate-image" alt="Number plate image" hidden>
+        <p class="plate-empty" id="event-plate-empty" role="status" hidden></p>
+        <div class="media-links" id="event-media-links"></div>
+      </div>
+    </dialog>
+    <h2>Sample media</h2>
     <section class="media-grid" id="media"></section>
   </main>
   <footer><nav aria-label="Legal information"><a href="/privacy">Privacy policy draft</a><a href="/terms">Terms and conditions draft</a></nav></footer>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script>
+    const OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     const mediaFiles = [
       {name: "plate_demo_01.jpg", kind: "image"},
       {name: "plate_demo_02.jpg", kind: "image"},
       {name: "plate_demo_03.jpg", kind: "image"},
       {name: "synthetic_demo_clip.mp4", kind: "video"}
     ];
-    const cell = (row, value) => { const td = document.createElement("td"); td.textContent = value ?? "Not recorded"; row.append(td); };
-    async function loadDashboard() {
-      const error = document.querySelector("#error"); error.textContent = "";
-      try {
-        const [nodesResponse, eventsResponse] = await Promise.all([fetch("/nodes"), fetch("/events?limit=100")]);
-        if (!nodesResponse.ok || !eventsResponse.ok) throw new Error("API request failed. Check that the backend is running.");
-        const [nodes, events] = await Promise.all([nodesResponse.json(), eventsResponse.json()]);
-        const nodesRoot = document.querySelector("#nodes"); nodesRoot.replaceChildren();
-        for (const node of nodes) {
-          const card = document.createElement("article"); card.className = "card node";
-          const title = document.createElement("h3"); title.textContent = `${node.node_id} / ${node.name}`;
-          const position = document.createElement("div"); position.className = "muted"; position.textContent = `Lat ${node.lat}, Lon ${node.lon}`;
-          card.append(title, position); nodesRoot.append(card);
-        }
-        const eventRoot = document.querySelector("#events"); eventRoot.replaceChildren();
-        for (const event of events) {
-          const row = document.createElement("tr");
-          cell(row, event.id); cell(row, event.ts); cell(row, event.type); cell(row, event.node_id);
-          cell(row, event.class); cell(row, event.plate?.text); cell(row, event.clip); eventRoot.append(row);
-        }
-        if (events.length === 0) {
-          const row = document.createElement("tr"); const empty = document.createElement("td");
-          empty.colSpan = 7; empty.textContent = "No events have been recorded."; row.append(empty); eventRoot.append(row);
-        }
-        document.querySelector("#summary").textContent = `${nodes.length} nodes | ${events.length} recorded events`;
-      } catch (err) { error.textContent = err.message; }
+    const apiStatus = document.querySelector("#api-status");
+    const errorMessage = document.querySelector("#error");
+    const latestEventsElement = document.querySelector("#latest-events");
+    const eventTypeFilter = document.querySelector("#event-type-filter");
+    const eventDialog = document.querySelector("#event-dialog");
+    const soundButton = document.querySelector("#enable-sound");
+    const soundState = document.querySelector("#sound-state");
+    const markersByNode = new Map();
+    const nodeNames = new Map();
+    const blinkTimers = new Map();
+    let map;
+    let lastEventId = 0;
+    let recentEvents = [];
+    let pollInFlight = false;
+    let soundEnabled = false;
+    let audioContext = null;
+
+    function setApiStatus(message, state) {
+      apiStatus.textContent = message;
+      apiStatus.dataset.state = state;
     }
+
+    function makePopup(node) {
+      const content = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = `${node.node_id}: ${node.name}`;
+      const coordinates = document.createElement("div");
+      coordinates.textContent = `${node.lat}, ${node.lon}`;
+      content.append(title, coordinates);
+      return content;
+    }
+
+    function initializeMap() {
+      if (!window.L) throw new Error("Leaflet did not load. Check the network and reload the dashboard.");
+      map = L.map("map", {scrollWheelZoom: true}).setView([29.864, 77.899], 15);
+      L.tileLayer(OSM_TILE_URL, {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+      }).addTo(map);
+    }
+
+    async function loadNodes() {
+      const response = await fetch("/nodes", {headers: {Accept: "application/json"}});
+      if (!response.ok) throw new Error(`Could not load nodes (HTTP ${response.status}).`);
+      const nodes = await response.json();
+      const positions = [];
+      for (const node of nodes) {
+        if (!Number.isFinite(Number(node.lat)) || !Number.isFinite(Number(node.lon))) continue;
+        nodeNames.set(node.node_id, node.name);
+        positions.push([Number(node.lat), Number(node.lon)]);
+        const marker = L.marker([Number(node.lat), Number(node.lon)], {
+          title: `${node.node_id}: ${node.name}`,
+          alt: `${node.node_id}: ${node.name}`,
+          icon: L.divIcon({className: "node-marker", html: '<span class="node-pin"></span>', iconSize: [20, 20], iconAnchor: [10, 10]})
+        }).addTo(map);
+        marker.bindPopup(makePopup(node));
+        markersByNode.set(node.node_id, marker);
+      }
+      if (positions.length > 1) map.fitBounds(positions, {padding: [32, 32], maxZoom: 16});
+      else if (positions.length === 1) map.setView(positions[0], 15);
+      if (positions.length === 0) throw new Error("The API returned no nodes with valid coordinates.");
+      window.setTimeout(() => map.invalidateSize(), 0);
+    }
+
+    function blinkNode(nodeId) {
+      const marker = markersByNode.get(nodeId);
+      const element = marker?.getElement();
+      if (!element) return;
+      const oldTimer = blinkTimers.get(nodeId);
+      if (oldTimer) window.clearTimeout(oldTimer);
+      element.classList.remove("is-alert");
+      void element.offsetWidth;
+      element.classList.add("is-alert");
+      blinkTimers.set(nodeId, window.setTimeout(() => {
+        element.classList.remove("is-alert");
+        blinkTimers.delete(nodeId);
+      }, 3100));
+    }
+
+    function displayTime(timestamp) {
+      const parsed = new Date(timestamp);
+      return Number.isNaN(parsed.getTime()) ? (timestamp || "Not recorded") : parsed.toLocaleString();
+    }
+
+    function mediaUrl(value) {
+      if (typeof value !== "string" || !value.trim()) return null;
+      const parts = value.trim().replaceAll("\\", "/").split("/").filter(part => part && part !== ".");
+      if (parts.some(part => part === "..")) return null;
+      if (parts[0] === "media") parts.shift();
+      if (parts.length === 0) return null;
+      return `/media/${parts.map(encodeURIComponent).join("/")}`;
+    }
+
+    function showEventDetails(event) {
+      const title = document.querySelector("#event-dialog-title");
+      const fields = document.querySelector("#event-detail-fields");
+      const image = document.querySelector("#event-plate-image");
+      const imageEmpty = document.querySelector("#event-plate-empty");
+      const links = document.querySelector("#event-media-links");
+      title.textContent = `${String(event.type || "Event").replaceAll("_", " ")} · ${event.node_id || "Unknown node"}`;
+      fields.replaceChildren();
+      const details = [
+        ["Time", displayTime(event.ts)],
+        ["Vehicle class", event.class || "Not recorded"],
+        ["Plate text", event.plate?.text || "Not recorded"],
+        ["Node", nodeNames.get(event.node_id) ? `${event.node_id} / ${nodeNames.get(event.node_id)}` : event.node_id || "Not recorded"],
+        ["Camera", event.cam_id || "Not recorded"],
+        ["Event ID", String(event.id ?? "Not recorded")]
+      ];
+      for (const [label, value] of details) {
+        const term = document.createElement("dt"); term.textContent = label;
+        const description = document.createElement("dd"); description.textContent = value;
+        fields.append(term, description);
+      }
+      const plateImageUrl = event.plate ? mediaUrl(event.plate.img) : null;
+      image.hidden = !plateImageUrl;
+      imageEmpty.hidden = Boolean(plateImageUrl);
+      imageEmpty.textContent = event.plate
+        ? (event.plate.img ? "The plate image path is invalid." : "Plate text is available, but no plate picture is attached.")
+        : "No plate was recorded for this event, so no plate text or picture is available.";
+      image.removeAttribute("src");
+      image.onerror = () => {
+        image.hidden = true;
+        imageEmpty.hidden = false;
+        imageEmpty.textContent = "The plate picture could not be loaded.";
+      };
+      if (plateImageUrl) {
+        image.src = plateImageUrl;
+      }
+      links.replaceChildren();
+      if (event.clip) {
+        const clipUrl = mediaUrl(event.clip);
+        if (clipUrl) {
+          const link = document.createElement("a");
+          link.href = clipUrl; link.target = "_blank"; link.rel = "noreferrer";
+          link.textContent = "Open event clip";
+          links.append(link);
+        } else {
+          const missing = document.createElement("span"); missing.className = "media-missing";
+          missing.textContent = "The clip path is invalid.";
+          links.append(missing);
+        }
+      } else {
+        const missing = document.createElement("span"); missing.className = "media-missing";
+        missing.textContent = "No clip is attached to this event.";
+        links.append(missing);
+      }
+      if (typeof eventDialog.showModal === "function") eventDialog.showModal();
+      else eventDialog.setAttribute("open", "");
+    }
+
+    function playEventBeep() {
+      if (!soundEnabled || !audioContext) return;
+      const startBeep = () => {
+        if (!soundEnabled || audioContext.state !== "running") return;
+        try {
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          const startAt = audioContext.currentTime;
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(880, startAt);
+          gain.gain.setValueAtTime(0.0001, startAt);
+          gain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.24);
+          oscillator.connect(gain); gain.connect(audioContext.destination);
+          oscillator.start(startAt); oscillator.stop(startAt + 0.25);
+        } catch (error) {
+          soundState.textContent = "Sound playback failed; click Enable sound to retry";
+        }
+      };
+      if (audioContext.state === "running") startBeep();
+      else audioContext.resume().then(startBeep).catch(() => {
+        soundState.textContent = "Sound blocked; click Enable sound to retry";
+      });
+    }
+
+    function renderLatestEvents() {
+      latestEventsElement.replaceChildren();
+      const selectedType = eventTypeFilter.value;
+      const visibleEvents = selectedType === "all" ? recentEvents : recentEvents.filter(event => event.type === selectedType);
+      if (visibleEvents.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "empty-events";
+        empty.textContent = recentEvents.length === 0 ? "No events have been recorded." : "No events match this type.";
+        latestEventsElement.append(empty);
+        return;
+      }
+      for (const event of visibleEvents) {
+        const item = document.createElement("li");
+        item.className = "latest-item";
+        const openButton = document.createElement("button");
+        openButton.className = "event-open";
+        openButton.type = "button";
+        openButton.setAttribute("aria-label", `View ${event.type || "event"} details for ${event.node_id || "unknown node"}`);
+        openButton.addEventListener("click", () => showEventDetails(event));
+        const heading = document.createElement("div");
+        heading.className = "event-heading";
+        const type = document.createElement("strong");
+        type.textContent = String(event.type || "Unknown event").replaceAll("_", " ");
+        const time = document.createElement("time");
+        time.className = "event-time";
+        time.dateTime = event.ts || "";
+        time.textContent = displayTime(event.ts);
+        heading.append(type, time);
+
+        const details = document.createElement("dl");
+        details.className = "event-details";
+        const fields = [
+          ["Class", event.class || "Not recorded"],
+          ["Plate", event.plate?.text || "Not recorded"],
+          ["Node", nodeNames.get(event.node_id) ? `${event.node_id} / ${nodeNames.get(event.node_id)}` : event.node_id || "Not recorded"]
+        ];
+        for (const [label, value] of fields) {
+          const group = document.createElement("div");
+          const term = document.createElement("dt"); term.textContent = label;
+          const description = document.createElement("dd"); description.textContent = value;
+          group.append(term, description); details.append(group);
+        }
+        openButton.append(heading, details);
+        item.append(openButton);
+        latestEventsElement.append(item);
+      }
+    }
+
+    function addEvents(events) {
+      const newEvents = events
+        .filter(event => Number.isInteger(event.id) && event.id > lastEventId)
+        .sort((left, right) => left.id - right.id);
+      for (const event of newEvents) {
+        lastEventId = Math.max(lastEventId, event.id);
+        blinkNode(event.node_id);
+        recentEvents.unshift(event);
+      }
+      if (newEvents.length > 0) {
+        playEventBeep();
+        recentEvents = recentEvents.slice(0, 20);
+        renderLatestEvents();
+      }
+    }
+
+    async function loadInitialEvents() {
+      const response = await fetch("/events?limit=20", {headers: {Accept: "application/json"}});
+      if (!response.ok) throw new Error(`Could not load recent events (HTTP ${response.status}).`);
+      recentEvents = await response.json();
+      lastEventId = recentEvents.reduce((maximum, event) => Math.max(maximum, event.id || 0), 0);
+      recentEvents.sort((left, right) => right.id - left.id);
+      renderLatestEvents();
+    }
+
+    async function pollEvents() {
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        if (!map) initializeMap();
+        if (markersByNode.size === 0) await loadNodes();
+        const response = await fetch(`/events?since_id=${encodeURIComponent(lastEventId)}`, {
+          headers: {Accept: "application/json"}
+        });
+        if (!response.ok) throw new Error(`Event request failed (HTTP ${response.status}).`);
+        addEvents(await response.json());
+        setApiStatus(`API connected | Checked ${new Date().toLocaleTimeString()}`, "connected");
+        errorMessage.textContent = "";
+      } catch (error) {
+        setApiStatus("API unavailable | Retrying", "error");
+        errorMessage.textContent = error.message;
+      } finally {
+        pollInFlight = false;
+      }
+    }
+
+    async function startDashboard() {
+      try {
+        initializeMap();
+        await loadNodes();
+        await loadInitialEvents();
+      } catch (error) {
+        errorMessage.textContent = error.message;
+      }
+      await pollEvents();
+      window.setInterval(pollEvents, 2000);
+    }
+
     const mediaRoot = document.querySelector("#media");
     for (const file of mediaFiles) {
       const card = document.createElement("article"); card.className = "card";
@@ -153,8 +490,40 @@
       const caption = document.createElement("p"); caption.textContent = file.name;
       card.append(preview, caption); mediaRoot.append(card);
     }
-    document.querySelector("#refresh").addEventListener("click", loadDashboard);
-    loadDashboard();
+    document.querySelector("#check-now").addEventListener("click", pollEvents);
+    eventTypeFilter.addEventListener("change", renderLatestEvents);
+    document.querySelector("#close-event-dialog").addEventListener("click", () => eventDialog.close?.());
+    eventDialog.addEventListener("click", event => {
+      if (event.target === eventDialog) eventDialog.close?.();
+    });
+    soundButton.addEventListener("click", async () => {
+      if (soundEnabled) {
+        soundEnabled = false;
+        soundButton.setAttribute("aria-pressed", "false");
+        soundButton.textContent = "Enable sound";
+        soundState.textContent = "Sound off";
+        return;
+      }
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        soundState.textContent = "Sound unavailable in this browser";
+        soundButton.disabled = true;
+        return;
+      }
+      try {
+        audioContext ||= new AudioContextClass();
+        await audioContext.resume();
+        soundEnabled = true;
+        soundButton.setAttribute("aria-pressed", "true");
+        soundButton.textContent = "Disable sound";
+        soundState.textContent = "Sound on";
+        playEventBeep();
+      } catch (error) {
+        soundEnabled = false;
+        soundState.textContent = "Could not enable sound";
+      }
+    });
+    startDashboard();
   </script>
 </body>
 </html>
