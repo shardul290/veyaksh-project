@@ -13,7 +13,9 @@ assets/rtsp_inputs/*
 *.avi
 *.mkv
 *.webm
-!m6_backend/media/synthetic_demo_clip.mp4
+
+# Event-frame extracts and short event evidence clips are local data products
+m6_backend/media/event_evidence/
 
 # Local datasets and extraction output
 assets/extracted_frames/

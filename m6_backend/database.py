@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS events (
     plate_conf REAL,
     plate_img TEXT,
     clip TEXT NOT NULL,
+    snapshot TEXT,
     received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (node_id) REFERENCES nodes(node_id)
 );
@@ -52,6 +53,11 @@ def initialize_database(db_path: Path | str = DB_PATH) -> Path:
 
     with sqlite3.connect(path) as connection:
         connection.executescript(SCHEMA)
+        event_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(events)").fetchall()
+        }
+        if "snapshot" not in event_columns:
+            connection.execute("ALTER TABLE events ADD COLUMN snapshot TEXT")
         connection.executemany(
             """INSERT INTO nodes (node_id, name, lat, lon) VALUES (?, ?, ?, ?)
                ON CONFLICT(node_id) DO UPDATE SET name = excluded.name""",

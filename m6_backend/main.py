@@ -49,6 +49,7 @@ class EventIn(BaseModel):
     zone_id: str = Field(min_length=1)
     plate: PlateIn | None
     clip: str = Field(min_length=1)
+    snapshot: str | None = None
 
     @field_validator("ts")
     @classmethod
@@ -106,8 +107,8 @@ def create_event(event: EventIn) -> dict[str, int]:
         cursor = db.execute(
             """INSERT INTO events
                (node_id, cam_id, ts, type, track_id, class, conf, zone_id,
-                plate_text, plate_conf, plate_img, clip)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                plate_text, plate_conf, plate_img, clip, snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.node_id, event.cam_id, event.ts, event.type, event.track_id,
                 event.vehicle_class, event.conf, event.zone_id,
@@ -115,6 +116,7 @@ def create_event(event: EventIn) -> dict[str, int]:
                 plate.conf if plate else None,
                 plate.img if plate else None,
                 event.clip,
+                event.snapshot,
             ),
         )
         event_id = cursor.lastrowid
@@ -159,7 +161,8 @@ def list_events(
             "id": row["id"], "node_id": row["node_id"], "cam_id": row["cam_id"],
             "ts": row["ts"], "type": row["type"], "track_id": row["track_id"],
             "class": row["class"], "conf": row["conf"], "zone_id": row["zone_id"],
-            "plate": plate, "clip": row["clip"], "received_at": row["received_at"],
+            "plate": plate, "clip": row["clip"], "snapshot": row["snapshot"],
+            "received_at": row["received_at"],
         })
     return result
 
