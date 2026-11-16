@@ -287,6 +287,11 @@
       return Number.isNaN(parsed.getTime()) ? (timestamp || "Not recorded") : parsed.toLocaleString();
     }
 
+    function displayEventType(value) {
+      if (value === "wrong_way") return "Possible wrong way";
+      return String(value || "Event").replaceAll("_", " ");
+    }
+
     function mediaUrl(value) {
       if (typeof value !== "string" || !value.trim()) return null;
       const [mediaPath, fragment = ""] = value.trim().replaceAll("\\", "/").split("#", 2);
@@ -307,7 +312,7 @@
       const image = document.querySelector("#event-plate-image");
       const imageEmpty = document.querySelector("#event-plate-empty");
       const links = document.querySelector("#event-media-links");
-      title.textContent = `${String(event.type || "Event").replaceAll("_", " ")} · ${event.node_id || "Unknown node"}`;
+      title.textContent = `${displayEventType(event.type)} · ${event.node_id || "Unknown node"}`;
       fields.replaceChildren();
       const details = [
         ["Time", displayTime(event.ts)],
@@ -416,12 +421,12 @@
         const openButton = document.createElement("button");
         openButton.className = "event-open";
         openButton.type = "button";
-        openButton.setAttribute("aria-label", `View ${event.type || "event"} details for ${event.node_id || "unknown node"}`);
+        openButton.setAttribute("aria-label", `View ${displayEventType(event.type)} details for ${event.node_id || "unknown node"}`);
         openButton.addEventListener("click", () => showEventDetails(event));
         const heading = document.createElement("div");
         heading.className = "event-heading";
         const type = document.createElement("strong");
-        type.textContent = String(event.type || "Unknown event").replaceAll("_", " ");
+        type.textContent = displayEventType(event.type);
         const time = document.createElement("time");
         time.className = "event-time";
         time.dateTime = event.ts || "";

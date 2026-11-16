@@ -141,12 +141,27 @@ def run_engine(tracks: dict[int, list[dict[str, Any]]], config: dict[str, Any]) 
     max_gap_s = float(config.get("max_track_gap_s", 1.0))
     if max_gap_s <= 0:
         raise ValueError("max_track_gap_s must be positive")
+    min_class_consistency = float(config.get("min_track_class_consistency", 0.0))
+    if not 0.0 <= min_class_consistency <= 1.0:
+        raise ValueError("min_track_class_consistency must be between 0 and 1")
 
     wrong_way = WrongWayRule(width, height, max_gap_s)
     encroachment = EncroachmentRule(width, height, max_gap_s)
     events: list[dict[str, Any]] = []
+    consistent_detections: list[dict[str, Any]] = []
+    for rows in tracks.values():
+        class_counts = Counter(row["class"] for row in rows)
+        if not class_counts:
+            continue
+        majority_class, majority_count = class_counts.most_common(1)[0]
+        consistency = majority_count / len(rows)
+        if consistency < min_class_consistency:
+            continue
+        # Keep the track's majority class and ignore intermittent class flips.
+        consistent_detections.extend(row for row in rows if row["class"] == majority_class)
+
     detections = sorted(
-        (row for rows in tracks.values() for row in rows),
+        consistent_detections,
         key=lambda item: (item["ts"], item["frame"], item["track_id"]),
     )
     for detection in detections:

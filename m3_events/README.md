@@ -22,6 +22,7 @@ The example file is a template only. Review the generated values before running 
 ## Rules in this first pass
 
 - `wrong_way` compares the vehicle-centre path over a sliding window with the lane's allowed heading. Defaults require at least 8 observations, 0.75 seconds of movement, displacement of at least 1.5% of the frame diagonal, and 3 consecutive wrong-heading windows. A track gap longer than `max_track_gap_s` resets its history.
+- `min_track_class_consistency` can suppress tracks whose predicted class changes repeatedly. It is a track-quality filter, not a class correction; set it only when class flicker is causing unreliable track IDs.
 - `encroachment` starts timing when a vehicle-centre enters a no-parking polygon. It emits once after `max_dwell_s`; a detection gap beyond the zone's `max_gap_s` restarts dwell timing. Leaving the polygon resets the rule.
 
 These rules need calibrated zones and clip review. The detector's class confidence is not a calibrated event probability; tracking errors, occlusion, perspective, and sparse detections can still cause missed or false events.
