@@ -18,6 +18,7 @@ assets/rtsp_inputs/*
 m6_backend/media/event_evidence/
 
 # Local datasets and extraction output
+data/
 assets/extracted_frames/
 assets/raw_videos/
 raw_videos/
@@ -33,3 +34,10 @@ VEYAKSH_TRAFFIC_DATASET*/
 
 # Private TLS key
 auto.key
+
+# Local model checkpoints (store in the approved model artifact location)
+*.pt
+
+# Generated local outputs
+runs/
+tracks/

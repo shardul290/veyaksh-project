@@ -49,6 +49,7 @@
         "two_wheeler",
         "auto",
         "e_rickshaw",
+        "bus_truck",
         "cart",
         "pedestrian",
         "other"

@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path(__file__).with_name("config.json")
 DEFAULT_EVENTS = Path(__file__).with_name("sample_events.jsonl")
 ALLOWED_TYPES = {"wrong_way", "encroachment"}
-ALLOWED_CLASSES = {"two_wheeler", "auto", "e_rickshaw", "car", "cart"}
+ALLOWED_CLASSES = {"two_wheeler", "auto", "e_rickshaw", "car", "bus_truck", "cart"}
 CLIP_SECONDS = 3.0
 
 

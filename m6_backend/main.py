@@ -43,7 +43,7 @@ class EventIn(BaseModel):
     type: Literal["wrong_way", "encroachment"]
     track_id: int = Field(ge=0)
     vehicle_class: Literal[
-        "car", "two_wheeler", "auto", "e_rickshaw", "cart", "pedestrian", "other"
+        "car", "two_wheeler", "auto", "e_rickshaw", "bus_truck", "cart", "pedestrian", "other"
     ] = Field(alias="class")
     conf: float = Field(ge=0, le=1)
     zone_id: str = Field(min_length=1)
