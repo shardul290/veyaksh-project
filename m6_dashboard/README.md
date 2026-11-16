@@ -42,7 +42,7 @@ In terminal 2, from the project root:
 .\.venv\Scripts\python.exe m5_edge_agent\send_events.py
 ```
 
-The sender reads `m5_edge_agent/sample_events.jsonl`, applies the node and camera from `m5_edge_agent/config.json`, converts `video_ts_s` to an ISO 8601 source timestamp, extracts one snapshot and one three-second clip for each event, and posts each event to `POST /events`. The API stores the event and its snapshot/clip paths; new map pins blink, and the event details show the snapshot and clip link.
+The sender reads `m5_edge_agent/sample_events.jsonl`, applies the node and camera from `m5_edge_agent/config.json`, converts `video_ts_s` to an ISO 8601 source timestamp, extracts one snapshot and one three-second clip for each event, and posts each event to `POST /events`. Event snapshots include a red bounding box and a label when the rule event provides its tracked box. The API stores the event and its snapshot/clip paths; new map pins blink, and the event details show the snapshot and clip link.
 
 Open the dashboard first, then run the sender. Five events are uploaded once and the script exits. To space them out by three seconds, use:
 

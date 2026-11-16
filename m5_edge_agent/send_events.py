@@ -80,7 +80,13 @@ def validate_engine_event(event: dict[str, Any], line_no: int) -> float:
     return float(seconds)
 
 
-def extract_snapshot(source: Path, timestamp_s: float, target: Path) -> None:
+def extract_snapshot(
+    source: Path,
+    timestamp_s: float,
+    target: Path,
+    bbox: list[float] | None = None,
+    label: str | None = None,
+) -> None:
     capture = cv2.VideoCapture(str(source))
     try:
         if not capture.isOpened():
@@ -92,6 +98,23 @@ def extract_snapshot(source: Path, timestamp_s: float, target: Path) -> None:
         ok, frame = capture.read()
         if not ok or frame is None:
             raise RuntimeError(f"Could not read source frame at {timestamp_s:.3f}s")
+        if bbox is not None and len(bbox) == 4:
+            height, width = frame.shape[:2]
+            x1, y1, x2, y2 = (int(round(value)) for value in bbox)
+            x1, x2 = max(0, min(width - 1, x1)), max(0, min(width - 1, x2))
+            y1, y2 = max(0, min(height - 1, y1)), max(0, min(height - 1, y2))
+            if x2 > x1 and y2 > y1:
+                red = (0, 0, 255)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), red, thickness=max(2, width // 500))
+                text = label or "EVENT"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = max(0.5, width / 1600)
+                text_size, baseline = cv2.getTextSize(text, font, scale, 2)
+                text_y = max(text_size[1] + baseline + 4, y1)
+                cv2.rectangle(frame, (x1, text_y - text_size[1] - baseline - 4),
+                              (min(width - 1, x1 + text_size[0] + 8), text_y + 2), red, -1)
+                cv2.putText(frame, text, (x1 + 4, text_y - baseline), font, scale,
+                            (255, 255, 255), 2, cv2.LINE_AA)
         target.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, 90]):
             raise RuntimeError(f"Could not write snapshot: {target}")
@@ -194,7 +217,14 @@ def main() -> int:
             stem = f"event_{index:03d}_track_{event['track_id']}"
             snapshot_path = evidence_dir / f"{stem}.jpg"
             clip_path = evidence_dir / f"{stem}.mp4"
-            extract_snapshot(source, video_ts, snapshot_path)
+            bbox = event.get("bbox")
+            if bbox is not None and (
+                not isinstance(bbox, list) or len(bbox) != 4
+                or not all(isinstance(value, (int, float)) for value in bbox)
+            ):
+                raise ValueError(f"Line {line_no}: bbox must be four numeric pixel coordinates")
+            snapshot_label = f"{event['type'].replace('_', ' ').upper()} | {event['class']} | ID {event['track_id']}"
+            extract_snapshot(source, video_ts, snapshot_path, bbox=bbox, label=snapshot_label)
             clip_asset, clip_offset = extract_clip(source, video_ts, clip_path)
             clip_value = f"{evidence_relative}/{clip_asset.name}"
             if clip_offset is not None:

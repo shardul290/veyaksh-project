@@ -80,4 +80,5 @@ class WrongWayRule:
             "zone_id": zone["zone_id"],
             "frame": detection["frame"],
             "video_ts_s": detection["ts"],
+            "bbox": list(detection["bbox"]),
         }
