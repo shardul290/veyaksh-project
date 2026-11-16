@@ -311,7 +311,10 @@
       fields.replaceChildren();
       const details = [
         ["Time", displayTime(event.ts)],
-        ["Vehicle class", event.class || "Not recorded"],
+        ["Model-predicted class", event.class || "Not recorded"],
+        ["Detector confidence (not violation probability)", Number.isFinite(Number(event.conf))
+          ? `${(Number(event.conf) * 100).toFixed(1)}%${Number(event.conf) < 0.5 ? " · low; verify class" : ""}`
+          : "Not recorded"],
         ["Plate text", event.plate?.text || "Not recorded"],
         ["Node", nodeNames.get(event.node_id) ? `${event.node_id} / ${nodeNames.get(event.node_id)}` : event.node_id || "Not recorded"],
         ["Camera", event.cam_id || "Not recorded"],
