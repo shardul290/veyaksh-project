@@ -289,11 +289,13 @@
 
     function mediaUrl(value) {
       if (typeof value !== "string" || !value.trim()) return null;
-      const parts = value.trim().replaceAll("\\", "/").split("/").filter(part => part && part !== ".");
+      const [mediaPath, fragment = ""] = value.trim().replaceAll("\\", "/").split("#", 2);
+      const parts = mediaPath.split("/").filter(part => part && part !== ".");
       if (parts.some(part => part === "..")) return null;
       if (parts[0] === "media") parts.shift();
       if (parts.length === 0) return null;
-      return `/media/${parts.map(encodeURIComponent).join("/")}`;
+      const timeFragment = /^t=\d+(?:\.\d+)?$/.test(fragment) ? `#${fragment}` : "";
+      return `/media/${parts.map(encodeURIComponent).join("/")}${timeFragment}`;
     }
 
     function showEventDetails(event) {

@@ -36,6 +36,16 @@ python -m m3_events.run_video_pipeline --video data/test.mp4 --model models/best
 
 Use `--device cpu` if no supported GPU is available. Outputs are `<video>_tracks.jsonl` and `<video>_events.jsonl` under the output directory. The rule engine is offline and does not send anything to the backend.
 
+To run the complete local demo, publish generated events to M6, and open the frontend, use:
+
+```powershell
+python scripts/run_detection_dashboard.py --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --device cpu
+```
+
+This launcher starts the local API if needed, runs detection and rules, sends event evidence through M5, and opens `http://127.0.0.1:8000/`. It defaults to CPU, can reuse a previous tracking export with `--tracks runs/m3/test_tracks.jsonl`, and leaves the dashboard API running after the command exits. With no system FFmpeg executable, event links use the original local video and seek to the event time; when FFmpeg is installed, M5 creates short event clips instead.
+
+This is a saved-video demo. Live RTSP inference is not yet connected to this launcher or the dashboard.
+
 You can also run the two existing stages separately:
 
 ```powershell

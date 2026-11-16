@@ -166,6 +166,14 @@ To forward those events, set `source_video`, `source_start_ts`, `node_id`, and `
 python m5_edge_agent/send_events.py --events data/events.jsonl
 ```
 
+For the complete local saved-video demo (detector → ByteTrack → M3 rules → M5 → M6 dashboard), run:
+
+```powershell
+python scripts/run_detection_dashboard.py --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --device cpu
+```
+
+The launcher starts the API if needed and opens the dashboard. Pass `--tracks <existing-tracks.jsonl>` to reuse tracking results. Live RTSP inference is not yet connected to this demo.
+
 The event engine supplies rule decisions, not calibrated camera zones. Validate zone geometry and thresholds against a representative clip before using alerts operationally.
 The emitted `conf` is the mean detector confidence over the track segment used by the rule; it is not a calibrated probability that a traffic violation occurred.
 

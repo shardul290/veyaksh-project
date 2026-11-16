@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import json
 import shutil
 import subprocess
@@ -97,10 +99,21 @@ def extract_snapshot(source: Path, timestamp_s: float, target: Path) -> None:
         capture.release()
 
 
-def extract_clip(source: Path, timestamp_s: float, target: Path) -> None:
+def extract_clip(source: Path, timestamp_s: float, target: Path) -> tuple[Path, float | None]:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        raise RuntimeError("ffmpeg is required to generate event clips; install ffmpeg and retry")
+        # Keep the demo usable without a system FFmpeg install. The dashboard
+        # opens the original clip at the event offset using a media fragment.
+        digest = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:10]
+        source_link = target.parent / f"source_{source.stem}_{digest}{source.suffix.lower()}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not source_link.exists() or source_link.stat().st_size != source.stat().st_size:
+            source_link.unlink(missing_ok=True)
+            try:
+                os.link(source, source_link)
+            except OSError:
+                shutil.copy2(source, source_link)
+        return source_link, timestamp_s
     capture = cv2.VideoCapture(str(source))
     try:
         fps = capture.get(cv2.CAP_PROP_FPS)
@@ -132,6 +145,7 @@ def extract_clip(source: Path, timestamp_s: float, target: Path) -> None:
     if not CLIP_SECONDS <= output_duration <= 5.0:
         target.unlink(missing_ok=True)
         raise RuntimeError(f"Generated clip duration must be 3 to 5 seconds; got {output_duration:.3f}s")
+    return target, None
 
 
 def source_timestamp(source_start: str, offset_s: float) -> str:
@@ -181,7 +195,10 @@ def main() -> int:
             snapshot_path = evidence_dir / f"{stem}.jpg"
             clip_path = evidence_dir / f"{stem}.mp4"
             extract_snapshot(source, video_ts, snapshot_path)
-            extract_clip(source, video_ts, clip_path)
+            clip_asset, clip_offset = extract_clip(source, video_ts, clip_path)
+            clip_value = f"{evidence_relative}/{clip_asset.name}"
+            if clip_offset is not None:
+                clip_value += f"#t={clip_offset:.3f}"
             payload = {
                 "node_id": node_id,
                 "cam_id": cam_id,
@@ -193,7 +210,7 @@ def main() -> int:
                 "zone_id": str(event["zone_id"]),
                 "plate": event.get("plate"),
                 "snapshot": f"{evidence_relative}/{snapshot_path.name}",
-                "clip": f"{evidence_relative}/{clip_path.name}",
+                "clip": clip_value,
             }
             result = requests.post(f"{api_url}/events", json=payload, timeout=15)
             if not result.ok:
