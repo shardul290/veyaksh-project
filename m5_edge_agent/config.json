@@ -1,0 +1,8 @@
+{
+  "api_url": "http://127.0.0.1:8000",
+  "node_id": "N01",
+  "cam_id": "C01",
+  "source_video": "m6_backend/media/dehradun_clip01_sample.mp4",
+  "source_start_ts": "2026-11-14T10:00:00+05:30",
+  "evidence_dir": "m6_backend/media/event_evidence"
+}
