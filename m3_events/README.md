@@ -4,13 +4,13 @@
 
 ## Configure camera zones
 
-Use the calibration helper with a frame from the target camera. It lets you click the lane boundary, permitted travel direction, and no-parking region, then writes normalized coordinates and the source frame size:
+Use the calibration helper with a frame from the target camera. Draw one polygon per directional carriageway/lane group, set the normal permitted travel direction for each, and add a no-parking region if needed. Opposing traffic flows need separate polygons and headings; do not combine both directions into one ROI. The helper writes normalized coordinates and the source frame size:
 
 ```powershell
 python -m m3_events.calibrate_zones --input data/test.mp4 --frame 0 --node-id N01 --cam-id C01 --output configs/zones/C01.json
 ```
 
-For an image, pass its path to `--input`; for a video, use `--frame` to choose a clear frame. In the window, click polygon vertices and press Enter to finish; Backspace undoes the last point and R resets the polygon. For the heading, click a point on the lane and then a second point in the permitted direction. The tool asks whether to add an encroachment polygon and its dwell threshold.
+For an image, pass its path to `--input`; for a video, use `--frame` to choose a clear frame. In the window, click polygon vertices and press Enter to finish; Backspace undoes the last point and R resets the polygon. For each heading, click a point on that lane and then a second point in the permitted direction. Answer yes to “Add another directional lane?” to calibrate the opposing flow. The tool then asks whether to add an encroachment polygon and its dwell threshold.
 
 The example file is a template only. Review the generated values before running on real footage:
 

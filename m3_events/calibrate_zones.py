@@ -117,15 +117,20 @@ def main() -> int:
             raise ValueError("Input must exist and frame index must be non-negative")
         frame = read_frame(args.input, args.frame)
         height, width = frame.shape[:2]
-        lane_polygon = draw_polygon(frame, "Draw lane ROI")
-        heading = draw_heading(frame)
-        tolerance = ask_float("Allowed heading tolerance in degrees", 35, 0, 180)
-        lanes = [{
-            "zone_id": "LANE_1", "polygon": lane_polygon,
-            "allowed_dir_deg": heading, "tolerance_deg": tolerance,
-            "min_observations": 8, "min_elapsed_s": 0.75,
-            "min_displacement_ratio": 0.015, "required_wrong_windows": 3,
-        }]
+        lanes = []
+        while True:
+            lane_number = len(lanes) + 1
+            lane_polygon = draw_polygon(frame, f"Draw directional lane ROI {lane_number}")
+            heading = draw_heading(frame)
+            tolerance = ask_float("Allowed heading tolerance in degrees", 35, 0, 180)
+            lanes.append({
+                "zone_id": f"LANE_{lane_number}", "polygon": lane_polygon,
+                "allowed_dir_deg": heading, "tolerance_deg": tolerance,
+                "min_observations": 8, "min_elapsed_s": 0.75,
+                "min_displacement_ratio": 0.015, "required_wrong_windows": 3,
+            })
+            if input("Add another directional lane? [y/N]: ").strip().lower() not in {"y", "yes"}:
+                break
         no_park_zones = []
         if input("Add a no-parking/encroachment region? [y/N]: ").strip().lower() in {"y", "yes"}:
             polygon = draw_polygon(frame, "Draw no-parking ROI")
