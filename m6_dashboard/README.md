@@ -24,6 +24,16 @@ cd C:\Users\91639\OneDrive\Desktop\projects\veyaksh_project
 
 If port 8000 is already in use, the API may already be running. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) and check that the dashboard reports the API as connected. After pulling code changes, stop an older server with `Ctrl+C` in its terminal and restart it so it loads the updated snapshot API. Do not start another server on the same port.
 
+## Run a detector result through to the dashboard
+
+From the repository root, after the video, `models/best.pt`, and calibrated zone file are in place, one command runs YOLO/ByteTrack and the M3 rules, starts the local backend if necessary, sends events through M5, and opens the dashboard:
+
+```powershell
+python scripts/run_detection_dashboard.py --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --device cpu
+```
+
+If tracks already exist, skip the YOLO pass and publish them through the rules and dashboard with `--tracks runs/m3/test_tracks.jsonl`. This is an offline saved-video flow. Live RTSP inference is not wired into the dashboard yet. If FFmpeg is unavailable, M5 links the original local video at the event timestamp instead of making a short excerpt.
+
 ## Send the five M5 sample events
 
 In terminal 2, from the project root:
@@ -32,7 +42,7 @@ In terminal 2, from the project root:
 .\.venv\Scripts\python.exe m5_edge_agent\send_events.py
 ```
 
-The sender reads `m5_edge_agent/sample_events.jsonl`, applies the node and camera from `m5_edge_agent/config.json`, converts `video_ts_s` to an ISO 8601 source timestamp, extracts one snapshot and one three-second clip for each event, and posts each event to `POST /events`. The API stores the event and its snapshot/clip paths; new map pins blink, and the event details show the snapshot and clip link.
+The sender reads `m5_edge_agent/sample_events.jsonl`, applies the node and camera from `m5_edge_agent/config.json`, converts `video_ts_s` to an ISO 8601 source timestamp, extracts one snapshot and one three-second clip for each event, and posts each event to `POST /events`. Event snapshots include a red bounding box and a label when the rule event provides its tracked box. The API stores the event and its snapshot/clip paths; new map pins blink, and the event details show the snapshot and clip link.
 
 Open the dashboard first, then run the sender. Five events are uploaded once and the script exits. To space them out by three seconds, use:
 

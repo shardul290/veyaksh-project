@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Video Ingest and Event Capture (M1 + M6)
 
 A minimal Python 3.11 project that reads video frames with OpenCV and stores submitted events in SQLite through FastAPI.
@@ -71,7 +70,6 @@ The included NanoDet ONNX model and its OpenCV Zoo helper/license are in `models
 
 See [RTSP_SETUP.md](RTSP_SETUP.md) for MediaMTX, FFmpeg looped publishing, and the OpenCV continuity check.
 
-=======
 # VEYAKSH
 
 **See. Sense. Understand.**
@@ -135,21 +133,49 @@ A two-wheeler enters the junction against the flow of traffic.
 **Input:** frames from M1.
 **Output:** for each frame, a list of objects: `track_id`, `class`, `bbox` (box position).
 **Why it exists:** events are about behaviour over time (direction, dwell). That needs identity, not just per-frame detection.
-**Tech:** YOLO11n for detection, ByteTrack for tracking. Export the model to ONNX early so it can later move to TensorRT (Jetson) or Hailo without a rewrite. Keep inference behind one function, `detect(frame) -> boxes`.
+**Tech:** the selected VEYAKSH YOLO11s `best.pt` checkpoint with Ultralytics ByteTrack for detection and tracking. Keep inference behind one adapter so the event rules consume a stable track format. `yolo11n.pt` remains the COCO baseline used for Task 2.7 comparison; its classes do not cover the full VEYAKSH taxonomy.
 **Week 1:** run on the test video, save an overlay video (boxes + IDs), and list where Indian traffic breaks it (auto-rickshaw, e-rickshaw, cart, two-wheeler).
 **Done when:** overlay video exists and a failure list is written in `DECISIONS.md`.
 
 ### M3: Event engine (rule plugins)
 **What it does:** turns tracks plus zone config into events.
 **Input:** tracks from M2 and the zone config.
-**Output:** events matching `schema/event.schema.json`.
-**Why it exists:** this is the "intelligence". Each feature is one small file in `m3_events/rules/` with one function: `evaluate(tracks, zones) -> list of events`. New features are new files, not a rewrite.
-**Rules, in planned order:**
-- `wrong_way`: movement direction is outside the lane's allowed direction (plus tolerance) for N frames.
-- `encroachment`: a vehicle stays in a no-park zone longer than the allowed dwell time.
-- Later: stalled vehicle, stray animal, vehicle count and congestion, helmet and triple riding, accident (first version only raises a "possible incident" for a human to confirm).
-**Week 1:** first a hardcoded wrong-way rule, then drive it from the zone config.
-**Done when:** the golden test clip produces the expected wrong-way event, and no event where there should be none.
+**Output:** intermediate rule events; M5 adds the ISO timestamp and evidence paths to produce the payload in `schema/event.schema.json`.
+**Why it exists:** this is the "intelligence". Each feature is an independent stateful rule in `m3_events/rules/`; the engine feeds it tracked objects and camera zones. New features can be added without rewriting the detector.
+**Implemented rules:**
+- `wrong_way`: a vehicle track moves outside a lane's allowed direction and tolerance over a sustained path.
+- `encroachment`: a vehicle track remains inside a no-parking polygon beyond its configured dwell time.
+
+The offline rule engine reads the per-detection JSONL produced by M2/ByteTrack and writes intermediate event JSONL for the M5 sender. Camera-specific polygons and thresholds live in `configs/zones/`; `configs/zones/C01.example.json` is only a template and must be calibrated to the actual camera before its events are treated as meaningful. Use `python -m m3_events.calibrate_zones --input <camera-frame-or-video> --output configs/zones/C01.json` to draw them. Polygon coordinates are normalized from 0 to 1. Heading convention: 0° right, 90° down, 180° left, 270° up in image coordinates.
+
+Run the complete detector → ByteTrack → rule pipeline for one clip:
+
+```powershell
+python -m m3_events.run_video_pipeline --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --output-dir runs/m3
+```
+
+This writes track and intermediate event JSONL files under `runs/m3/`; it does not upload events. To run only the rules over an existing track export:
+
+```powershell
+python -m m3_events.event_engine --tracks tracks/campus_best.jsonl --zones configs/zones/C01.json --output data/events.jsonl
+```
+
+To forward those events, set `source_video`, `source_start_ts`, `node_id`, and `cam_id` in `m5_edge_agent/config.json` to match the same clip and camera, then run:
+
+```powershell
+python m5_edge_agent/send_events.py --events data/events.jsonl
+```
+
+For the complete local saved-video demo (detector → ByteTrack → M3 rules → M5 → M6 dashboard), run:
+
+```powershell
+python scripts/run_detection_dashboard.py --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --device cpu
+```
+
+The launcher starts the API if needed and opens the dashboard. Pass `--tracks <existing-tracks.jsonl>` to reuse tracking results. Live RTSP inference is not yet connected to this demo.
+
+The event engine supplies rule decisions, not calibrated camera zones. Validate zone geometry and thresholds against a representative clip before using alerts operationally.
+The emitted `conf` is the mean detector confidence over the track segment used by the rule; it is not a calibrated probability that a traffic violation occurred.
 
 ### M4: ANPR (number plate reading)
 **What it does:** finds the plate on an event frame and reads its text.
@@ -200,7 +226,7 @@ Event (`schema/event.schema.json`):
 }
 ```
 `type`: `wrong_way`, `encroachment`.
-`class`: `car`, `two_wheeler`, `auto`, `e_rickshaw`, `cart`, `pedestrian`, `other`.
+`class`: `car`, `two_wheeler`, `auto`, `e_rickshaw`, `bus_truck`, `cart`, `pedestrian`, `other`.
 
 Zone config (`configs/zones/C2.json`) holds lane polygons with `allowed_dir_deg` and `tol_deg`, and no-park polygons with `max_dwell_s`.
 
@@ -235,7 +261,7 @@ Zone config (`configs/zones/C2.json`) holds lane polygons with `allowed_dir_deg`
 python -m venv .venv
 .venv\Scripts\activate          # Windows;  Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-python m2_detect_track/track_demo.py data/test.mp4
+python m2_detect_track/export_tracks_jsonl.py --video data/test.mp4 --model models/best.pt --kind veyaksh --output tracks/test_best.jsonl
 uvicorn m6_backend.main:app --reload
 ```
 
@@ -248,5 +274,4 @@ configs/zones/           per-camera zone configs
 data/golden/             golden test clip and labels
 m1_ingest/ ... m6_dashboard/   one folder per module
 scripts/run_pipeline.py  single entry point, wired up as modules land
-``` 
->>>>>>> b4fa1ef87ef2af01f68c719af4699ed7f2939232
+```
