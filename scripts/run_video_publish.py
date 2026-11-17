@@ -51,6 +51,7 @@ def main() -> int:
     parser.add_argument("--model", required=True, help="YOLO checkpoint, e.g. models/best.pt")
     parser.add_argument("--zones", required=True, help="Calibrated zone JSON for this camera")
     parser.add_argument("--output-dir", required=True, help="Directory for tracks and rule-event JSONL")
+    parser.add_argument("--annotated-output", help="Optional video file to save with detector boxes and track IDs")
     parser.add_argument("--device", default="cpu", help="GPU index or 'cpu' (default: cpu)")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--conf", type=float, default=0.15)
@@ -94,6 +95,8 @@ def main() -> int:
         "--output-dir", str(output_dir), "--device", args.device,
         "--imgsz", str(args.imgsz), "--conf", str(args.conf), "--stride", str(args.stride),
     ]
+    if args.annotated_output:
+        pipeline_command.extend(["--annotated-output", str(project_path(args.annotated_output))])
     print("Running detection, tracking, and event rules...")
     try:
         subprocess.run(pipeline_command, cwd=PROJECT_ROOT, check=True)
