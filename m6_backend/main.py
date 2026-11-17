@@ -16,9 +16,11 @@ from .database import DB_PATH as DEFAULT_DB_PATH, initialize_database
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = Path(__file__).resolve().parent
 DASHBOARD_FILE = ROOT / "m6_dashboard" / "index.html"
+MAP_DASHBOARD_FILE = ROOT / "m6_dashboard" / "map.html"
 PRIVACY_FILE = ROOT / "m6_dashboard" / "privacy.html"
 TERMS_FILE = ROOT / "m6_dashboard" / "terms.html"
 FAVICON_FILE = ROOT / "m6_dashboard" / "favicon.svg"
+BRAND_LOGO_FILE = ROOT / "m6_dashboard" / "veyaksh-logo.jpg"
 DB_PATH = Path(os.environ.get("EVENTS_DB_PATH", DEFAULT_DB_PATH))
 MEDIA_DIR = BACKEND_DIR / "media"
 
@@ -76,6 +78,11 @@ def dashboard() -> FileResponse:
     return FileResponse(DASHBOARD_FILE)
 
 
+@app.get("/map", include_in_schema=False)
+def map_dashboard() -> FileResponse:
+    return FileResponse(MAP_DASHBOARD_FILE)
+
+
 @app.get("/privacy", include_in_schema=False)
 def privacy_policy() -> FileResponse:
     return FileResponse(PRIVACY_FILE)
@@ -89,6 +96,11 @@ def terms_and_conditions() -> FileResponse:
 @app.get("/favicon.svg", include_in_schema=False)
 def favicon() -> FileResponse:
     return FileResponse(FAVICON_FILE, media_type="image/svg+xml")
+
+
+@app.get("/branding/veyaksh-logo.jpg", include_in_schema=False)
+def brand_logo() -> FileResponse:
+    return FileResponse(BRAND_LOGO_FILE, media_type="image/jpeg")
 
 
 @app.get("/health")
