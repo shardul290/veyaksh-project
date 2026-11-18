@@ -37,12 +37,9 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
-# Placeholder locations near IIT Roorkee; replace these when camera locations
-# are confirmed by the team.
-PLACEHOLDER_NODES = (
-    ("N01", "Solanipuram", 29.8640, 77.8960),
-    ("N02", "Adarsh nagar", 29.8660, 77.8990),
-    ("N03", "Civil lines", 29.8610, 77.9020),
+CAMERA_NODES = (
+    ("N01", "Point 1", 29 + 51/60 + 50.2/3600, 77 + 53/60 + 43.5/3600),
+    ("N02", "Point 2", 29 + 51/60 + 53.8/3600, 77 + 54/60 + 3/3600),
 )
 
 
@@ -58,10 +55,31 @@ def initialize_database(db_path: Path | str = DB_PATH) -> Path:
         }
         if "snapshot" not in event_columns:
             connection.execute("ALTER TABLE events ADD COLUMN snapshot TEXT")
+        if "archived" not in event_columns:
+            connection.execute("ALTER TABLE events ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            # Footage from before the surveyed locations was declared invalid.
+            # Retain its records for audit without attaching it to the new pins.
+            connection.execute("UPDATE events SET archived = 1")
+        for name, definition in {
+            "status": "TEXT NOT NULL DEFAULT 'pending'",
+            "status_at": "TEXT",
+            "video_ts_s": "REAL",
+        }.items():
+            if name not in event_columns:
+                connection.execute(f"ALTER TABLE events ADD COLUMN {name} {definition}")
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS event_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL REFERENCES events(id),
+                status TEXT NOT NULL,
+                ts TEXT NOT NULL
+            );
+        """)
         connection.executemany(
             """INSERT INTO nodes (node_id, name, lat, lon) VALUES (?, ?, ?, ?)
-               ON CONFLICT(node_id) DO UPDATE SET name = excluded.name""",
-            PLACEHOLDER_NODES,
+               ON CONFLICT(node_id) DO UPDATE SET name = excluded.name,
+               lat = excluded.lat, lon = excluded.lon""",
+            CAMERA_NODES,
         )
 
     return path

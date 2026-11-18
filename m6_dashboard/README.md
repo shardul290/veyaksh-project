@@ -1,3 +1,7 @@
+# VEYAKSH traffic operations dashboard
+
+Run from the repository root:
+
 # M6 dashboard
 
 The FastAPI service serves a dark VEYAKSH Sentinel dashboard at `http://127.0.0.1:8000/`. It polls the local event API, presents summary counts and event mix, and links each event to its saved frame, clip, and plate image where available.
