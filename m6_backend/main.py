@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +27,7 @@ MEDIA_DIR = BACKEND_DIR / "media"
 
 app = FastAPI(title="VEYAKSH Traffic Events API", version="2.0.0")
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+app.mount("/dashboard-assets", StaticFiles(directory=ROOT / "m6_dashboard"), name="dashboard-assets")
 
 
 class PlateIn(BaseModel):
@@ -52,6 +54,7 @@ class EventIn(BaseModel):
     plate: PlateIn | None
     clip: str = Field(min_length=1)
     snapshot: str | None = None
+    video_ts_s: float | None = Field(default=None, ge=0)
 
     @field_validator("ts")
     @classmethod
@@ -80,7 +83,12 @@ def dashboard() -> FileResponse:
 
 @app.get("/map", include_in_schema=False)
 def map_dashboard() -> FileResponse:
-    return FileResponse(MAP_DASHBOARD_FILE)
+    return FileResponse(DASHBOARD_FILE)
+
+
+@app.get("/history", include_in_schema=False)
+def history_page() -> FileResponse:
+    return FileResponse(DASHBOARD_FILE)
 
 
 @app.get("/privacy", include_in_schema=False)
@@ -110,6 +118,8 @@ def health() -> dict[str, str]:
 
 @app.post("/events", status_code=201)
 def create_event(event: EventIn) -> dict[str, int]:
+    if {"N01": "C01", "N02": "C02"}.get(event.node_id) != event.cam_id:
+        raise HTTPException(422, "Use the surveyed camera pair N01/C01 or N02/C02")
     with connect() as db:
         node = db.execute("SELECT 1 FROM nodes WHERE node_id = ?", (event.node_id,)).fetchone()
         if node is None:
@@ -119,8 +129,8 @@ def create_event(event: EventIn) -> dict[str, int]:
         cursor = db.execute(
             """INSERT INTO events
                (node_id, cam_id, ts, type, track_id, class, conf, zone_id,
-                plate_text, plate_conf, plate_img, clip, snapshot)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                plate_text, plate_conf, plate_img, clip, snapshot, video_ts_s)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.node_id, event.cam_id, event.ts, event.type, event.track_id,
                 event.vehicle_class, event.conf, event.zone_id,
@@ -129,6 +139,7 @@ def create_event(event: EventIn) -> dict[str, int]:
                 plate.img if plate else None,
                 event.clip,
                 event.snapshot,
+                event.video_ts_s,
             ),
         )
         event_id = cursor.lastrowid
@@ -141,6 +152,9 @@ def list_events(
     type: Literal["wrong_way", "encroachment"] | None = None,
     node_id: str | None = Query(default=None, pattern=r"^N[0-9]{2}$"),
     limit: int = Query(default=100, ge=1, le=500),
+    before_id: int | None = Query(default=None, ge=1),
+    status: Literal["pending", "false_alert", "action_taken", "authority_requested"] | None = None,
+    active: bool = False,
 ) -> list[dict[str, object]]:
     clauses: list[str] = []
     values: list[object] = []
@@ -153,6 +167,14 @@ def list_events(
     if node_id is not None:
         clauses.append("node_id = ?")
         values.append(node_id)
+    if before_id is not None:
+        clauses.append("id < ?")
+        values.append(before_id)
+    if status is not None:
+        clauses.append("status = ?")
+        values.append(status)
+    if active:
+        clauses.append("archived = 0")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     values.append(limit)
 
@@ -175,6 +197,9 @@ def list_events(
             "class": row["class"], "conf": row["conf"], "zone_id": row["zone_id"],
             "plate": plate, "clip": row["clip"], "snapshot": row["snapshot"],
             "received_at": row["received_at"],
+            "status": row["status"], "status_at": row["status_at"],
+            "video_ts_s": row["video_ts_s"],
+            "archived": bool(row["archived"]),
         })
     return result
 
@@ -183,6 +208,63 @@ def list_events(
 def list_nodes() -> list[dict[str, object]]:
     with connect() as db:
         rows = db.execute(
-            "SELECT node_id, name, lat, lon FROM nodes ORDER BY node_id"
+            "SELECT node_id, name, lat, lon FROM nodes WHERE node_id IN ('N01', 'N02') ORDER BY node_id"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+class ReviewIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["false_alert", "action_taken", "authority_requested"]
+
+
+@app.get("/events-summary")
+def event_summary() -> dict[str, int]:
+    result = dict.fromkeys(("pending", "false_alert", "action_taken", "authority_requested"), 0)
+    with connect() as db:
+        for row in db.execute("SELECT status, COUNT(*) AS total FROM events WHERE archived = 0 GROUP BY status"):
+            result[row["status"]] = row["total"]
+    return result
+
+
+@app.patch("/events/{event_id}/status")
+def review_event(event_id: int, review: ReviewIn) -> dict[str, object]:
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        event = db.execute("SELECT status, status_at, archived FROM events WHERE id = ?", (event_id,)).fetchone()
+        if event is None:
+            raise HTTPException(404, "Event not found")
+        if event["archived"]:
+            raise HTTPException(409, "Legacy evidence is archived and cannot be actioned")
+        if event["status"] == review.status:
+            return {"id": event_id, "status": event["status"], "status_at": event["status_at"]}
+        allowed = {"pending": {"false_alert", "action_taken"}, "action_taken": {"authority_requested"}}
+        if review.status not in allowed.get(event["status"], set()):
+            raise HTTPException(409, "This event has already been reviewed. Refresh its status.")
+        now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        db.execute("UPDATE events SET status = ?, status_at = ? WHERE id = ?", (review.status, now, event_id))
+        db.execute("INSERT INTO event_actions (event_id, status, ts) VALUES (?, ?, ?)", (event_id, review.status, now))
+    return {"id": event_id, "status": review.status, "status_at": now}
+
+
+@app.get("/events/{event_id}/actions")
+def event_actions(event_id: int) -> list[dict[str, object]]:
+    with connect() as db:
+        if db.execute("SELECT 1 FROM events WHERE id = ?", (event_id,)).fetchone() is None:
+            raise HTTPException(404, "Event not found")
+        return [dict(row) for row in db.execute(
+            "SELECT status, ts FROM event_actions WHERE event_id = ? ORDER BY id", (event_id,)
+        ).fetchall()]
+
+
+@app.get("/cameras")
+def camera_recordings() -> list[dict[str, object]]:
+    config = json.loads((ROOT / "configs" / "cameras.json").read_text(encoding="utf-8"))
+    for camera in config:
+        available = []
+        for recording in camera.get("recordings", []):
+            path = (MEDIA_DIR / recording["path"]).resolve()
+            if path.is_relative_to(MEDIA_DIR.resolve()) and path.is_file():
+                available.append(recording)
+        camera["recordings"] = available
+    return config
