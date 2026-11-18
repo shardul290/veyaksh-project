@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import sqlite3
-from datetime import datetime, timezone
+import subprocess
+import sys
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+import cv2
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -24,10 +31,88 @@ FAVICON_FILE = ROOT / "m6_dashboard" / "favicon.svg"
 BRAND_LOGO_FILE = ROOT / "m6_dashboard" / "veyaksh-logo.jpg"
 DB_PATH = Path(os.environ.get("EVENTS_DB_PATH", DEFAULT_DB_PATH))
 MEDIA_DIR = BACKEND_DIR / "media"
+UPLOAD_DIR = ROOT / "data" / "dashboard_uploads"
+JOB_DIR = ROOT / "runs" / "dashboard_jobs"
+MODEL_FILE = ROOT / "models" / "best.pt"
+ZONE_DIR = ROOT / "configs" / "zones"
+MAX_VIDEO_BYTES = 1024 * 1024 * 1024
+ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+VIDEO_JOBS: dict[str, dict[str, Any]] = {}
+VIDEO_JOBS_LOCK = threading.Lock()
+VIDEO_JOB_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="veyaksh-video")
 
 app = FastAPI(title="VEYAKSH Traffic Events API", version="2.0.0")
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 app.mount("/dashboard-assets", StaticFiles(directory=ROOT / "m6_dashboard"), name="dashboard-assets")
+
+
+def _job_snapshot(job_id: str) -> dict[str, Any] | None:
+    with VIDEO_JOBS_LOCK:
+        job = VIDEO_JOBS.get(job_id)
+        if job is None:
+            return None
+        result = {key: value for key, value in job.items() if key not in {
+            "video_path", "output_dir", "annotated_path", "zone_path", "api_url",
+            "tracks_path", "events_path",
+        }}
+        if job["state"] == "succeeded":
+            result["detections_url"] = f"/video-jobs/{job_id}/detections"
+        return result
+
+
+def _run_video_job(job_id: str) -> None:
+    with VIDEO_JOBS_LOCK:
+        job = VIDEO_JOBS[job_id]
+        job["state"] = "running"
+        video_path = Path(job["video_path"])
+        output_dir = Path(job["output_dir"])
+        zone_path = Path(job["zone_path"])
+        device = str(job["device"])
+        api_url = str(job["api_url"])
+
+    command = [
+        sys.executable, str(ROOT / "scripts" / "run_video_publish.py"),
+        "--video", str(video_path), "--model", str(MODEL_FILE),
+        "--zones", str(zone_path), "--output-dir", str(output_dir),
+        "--device", device, "--api-url", api_url,
+    ]
+    tail: list[str] = []
+    try:
+        process = subprocess.Popen(
+            command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.rstrip()
+            if line:
+                tail.append(line)
+                del tail[:-30]
+            progress = re.search(r"Processed (\d+) sampled frames", line)
+            if progress is None:
+                progress = re.search(r"sampled frames=(\d+)", line)
+            if progress:
+                with VIDEO_JOBS_LOCK:
+                    VIDEO_JOBS[job_id]["processed_frames"] = int(progress.group(1))
+        return_code = process.wait()
+        if return_code != 0:
+            raise RuntimeError("\n".join(tail[-12:]) or f"Pipeline exited with code {return_code}")
+        tracks_path = output_dir / f"{video_path.stem}_tracks.jsonl"
+        events_path = output_dir / f"{video_path.stem}_events.jsonl"
+        if not tracks_path.is_file() or not events_path.is_file():
+            raise RuntimeError("Pipeline finished without producing tracking and event outputs.")
+        event_count = sum(1 for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()) if events_path.exists() else 0
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[job_id].update({
+                "state": "succeeded", "event_count": event_count,
+                "tracks_path": str(tracks_path), "events_path": str(events_path),
+                "log_tail": tail[-12:], "error": None,
+            })
+    except Exception as exc:
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[job_id].update({
+                "state": "failed", "error": str(exc), "log_tail": tail[-12:],
+            })
 
 
 class PlateIn(BaseModel):
@@ -47,7 +132,7 @@ class EventIn(BaseModel):
     type: Literal["wrong_way", "encroachment"]
     track_id: int = Field(ge=0)
     vehicle_class: Literal[
-        "car", "two_wheeler", "auto", "e_rickshaw", "cart", "pedestrian", "other"
+        "car", "two_wheeler", "auto", "e_rickshaw", "bus_truck", "cart", "pedestrian", "other"
     ] = Field(alias="class")
     conf: float = Field(ge=0, le=1)
     zone_id: str = Field(min_length=1)
@@ -114,6 +199,124 @@ def brand_logo() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/video-jobs", status_code=202)
+async def create_video_job(
+    request: Request,
+    zone_config: str = Query("configs/zones/C01_encroachment_test.json"),
+    device: str = Query("cpu"),
+    x_video_filename: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Accept a local video and run YOLO/ByteTrack, M3 rules, M5 publishing, and annotated export."""
+    filename = Path(x_video_filename or "video.mp4").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_VIDEO_SUFFIXES:
+        raise HTTPException(status_code=415, detail="Upload an MP4, MOV, M4V, AVI, MKV, or WebM video.")
+    if device != "cpu" and not device.isdigit():
+        raise HTTPException(status_code=422, detail="device must be 'cpu' or a CUDA index such as '0'.")
+    if not MODEL_FILE.is_file():
+        raise HTTPException(status_code=503, detail=f"YOLO checkpoint is missing: {MODEL_FILE}")
+    if Path(zone_config).is_absolute():
+        raise HTTPException(status_code=422, detail="zone_config must be a project-relative path under configs/zones/.")
+    zone_path = (ROOT / zone_config).resolve()
+    try:
+        zone_path.relative_to(ZONE_DIR.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="zone_config must be inside configs/zones/.") from exc
+    if not zone_path.is_file() or zone_path.suffix.lower() != ".json":
+        raise HTTPException(status_code=404, detail=f"Zone configuration not found: {zone_config}")
+    try:
+        zone_data = json.loads(zone_path.read_text(encoding="utf-8-sig"))
+        if not all(isinstance(zone_data.get(key), str) and zone_data[key] for key in ("node_id", "cam_id")):
+            raise ValueError("zone config must include node_id and cam_id")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid zone configuration: {exc}") from exc
+
+    with VIDEO_JOBS_LOCK:
+        if any(job["state"] in {"queued", "running"} for job in VIDEO_JOBS.values()):
+            raise HTTPException(status_code=409, detail="A video is already being processed. Wait for it to finish.")
+
+    job_id = uuid.uuid4().hex
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    upload_path = UPLOAD_DIR / f"{job_id}{suffix}"
+    size = 0
+    try:
+        with upload_path.open("wb") as destination:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > MAX_VIDEO_BYTES:
+                    raise HTTPException(status_code=413, detail="Maximum uploaded video size is 1 GiB.")
+                destination.write(chunk)
+    except Exception:
+        upload_path.unlink(missing_ok=True)
+        raise
+    if size == 0:
+        upload_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    capture = cv2.VideoCapture(str(upload_path))
+    video_fps = float(capture.get(cv2.CAP_PROP_FPS))
+    video_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    can_read_video = capture.isOpened()
+    capture.release()
+    if not can_read_video or video_fps <= 0 or video_frames <= 0:
+        upload_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="The uploaded file could not be decoded as a video.")
+
+    output_dir = JOB_DIR / job_id
+    with VIDEO_JOBS_LOCK:
+        VIDEO_JOBS[job_id] = {
+            "job_id": job_id, "filename": filename,
+            "state": "queued", "processed_frames": 0, "event_count": None,
+            "error": None, "log_tail": [], "video_path": str(upload_path),
+            "output_dir": str(output_dir), "fps": video_fps, "frame_count": video_frames,
+            "zone_path": str(zone_path), "device": device,
+            "api_url": str(request.base_url).rstrip("/"),
+        }
+    VIDEO_JOB_POOL.submit(_run_video_job, job_id)
+    return _job_snapshot(job_id) or {"job_id": job_id, "state": "queued"}
+
+
+@app.get("/video-jobs/{job_id}")
+def get_video_job(job_id: str) -> dict[str, Any]:
+    result = _job_snapshot(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Video job not found.")
+    return result
+
+
+@app.get("/video-jobs/{job_id}/detections")
+def get_video_job_detections(job_id: str) -> dict[str, Any]:
+    result = _job_snapshot(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Video job not found.")
+    if result["state"] != "succeeded":
+        raise HTTPException(status_code=409, detail="Detection results are not ready yet.")
+    with VIDEO_JOBS_LOCK:
+        tracks_path = Path(VIDEO_JOBS[job_id]["tracks_path"])
+        events_path = Path(VIDEO_JOBS[job_id]["events_path"])
+        fps = float(VIDEO_JOBS[job_id]["fps"])
+        frame_count = int(VIDEO_JOBS[job_id]["frame_count"])
+
+    def read_jsonl(path: Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip():
+                    value = json.loads(line)
+                    if isinstance(value, dict):
+                        rows.append(value)
+        return rows
+
+    try:
+        detections = read_jsonl(tracks_path)
+        events = read_jsonl(events_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load video job results: {exc}") from exc
+    return {"fps": fps, "frame_count": frame_count, "detections": detections, "events": events}
 
 
 @app.post("/events", status_code=201)

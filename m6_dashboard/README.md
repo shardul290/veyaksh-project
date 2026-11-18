@@ -2,89 +2,33 @@
 
 Run from the repository root:
 
+# M6 dashboard
+
+The FastAPI service serves a dark VEYAKSH Sentinel dashboard at `http://127.0.0.1:8000/`. It polls the local event API, presents summary counts and event mix, and links each event to its saved frame, clip, and plate image where available.
+
+## Saved video analysis
+
+Use the Video control to upload a local clip. The backend saves it under the ignored `data/dashboard_uploads/` directory, runs `models/best.pt` through YOLO/ByteTrack and the M3 rules, then publishes rule events through M5 to the dashboard API. When inference finishes, the browser plays the original clip with per-frame detection boxes rendered on a canvas overlay. Rule-event detections are highlighted in red; ordinary detections use cyan.
+
+Supported formats: MP4, MOV, M4V, AVI, MKV, and WebM, up to 1 GiB. The zone configuration must be a valid project-relative JSON path under `configs/zones/`. CPU is selected by default; choose CUDA 0 only with a working CUDA-enabled PyTorch installation.
+
+This is offline processing of an uploaded saved video. The CCTV Integration control currently explains the required browser-compatible stream/relay; live RTSP inference is not connected yet.
+
+## Start the backend
+
+From the project root:
+
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn m6_backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://127.0.0.1:8000/ for the integrated map, CCTV recordings and evidence
-trail, or http://127.0.0.1:8000/history for the permanent event record. Restart
-an older backend after updating this code. The API and dashboard share an origin.
+If port 8000 is already occupied, stop the existing server in its terminal with `Ctrl+C`, then restart it so it loads current code. Do not start a second server on the same port.
 
-## New surveyed recordings
+## Check the service
 
-Add browser-compatible H.264 MP4 files at these exact paths:
+- Dashboard: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- API health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- API events: [http://127.0.0.1:8000/events?limit=20](http://127.0.0.1:8000/events?limit=20)
+- API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-- `m6_backend/media/camera_recordings/point_1.mp4`: N01 / C01,
-  29°51'50.2"N 77°53'43.5"E.
-- `m6_backend/media/camera_recordings/point_2.mp4`: N02 / C02,
-  29°51'53.8"N 77°54'03.0"E.
-
-The CCTV panel discovers added recordings within two seconds without a restart.
-Click either blue map marker or the corresponding camera selector. The separate
-video upload button has been removed. `configs/cameras.json` supports multiple
-saved recordings per camera; set the actual timezone-aware `start_ts` when known.
-See `m6_backend/media/camera_recordings/README.md` for more details.
-
-The old clips are invalid for these surveyed locations. On first upgrade,
-existing events become archived legacy records in History. They do not activate
-the new camera pins, appear in the evidence queue, or expose their old footage.
-No historical records are deleted. Only the two surveyed nodes appear on the map.
-
-## Analyse and publish events
-
-Adding a recording enables playback; it does not run inference. Run the existing
-YOLO/ByteTrack and M3 rule pipeline on the new footage with zones calibrated for
-each camera. Publish the resulting JSONL events through M5 with the matching
-configuration. Set `source_start_ts` to the actual recording start time first;
-the placeholder intentionally prevents publishing events with invented times.
-
-```powershell
-.\.venv\Scripts\python.exe m5_edge_agent/send_events.py --config m5_edge_agent/point_1.config.json --events runs/point_1_events.jsonl
-.\.venv\Scripts\python.exe m5_edge_agent/send_events.py --config m5_edge_agent/point_2.config.json --events runs/point_2_events.jsonl
-```
-
-The default `m5_edge_agent/config.json` also targets Point 1. Existing sample
-events and old zone examples are not analyses of the new recordings. Do not use
-them as real evidence for these locations. The sender extracts snapshots and
-three-second clips using FFmpeg, or links the source at the event offset when
-FFmpeg is unavailable. Evidence filenames include a recording/event fingerprint
-so a later recording does not overwrite earlier clips.
-
-## Review workflow
-
-Click Enable sound once after each page load to allow browser audio. Newly
-received events play a tone. Camera markers remain blue until their location
-has an event awaiting review, then blink red until all its active events are
-reviewed. Polling runs every two seconds. Reduced-motion preferences disable
-animation while retaining the red alert indicator.
-
-Review evidence at the bottom of Overview:
-
-- False alert saves a decision and removes the event from the evidence trail.
-- Take action saves a decision and opens response options.
-- Alert authorities saves a timestamped local request. No external delivery
-  service or authority contact is configured; no message is sent.
-
-All events remain in History with their source clip timestamp, exact video
-offset (when provided), current status and decision timestamp. The activity trail
-retains the separate timestamps for each action. Review timestamps are stored in
-UTC and displayed in IST; the source timestamp is preserved unchanged. Duplicate
-submissions of the same review do not create duplicate audit entries. Conflicting
-reviews return an error rather than overwriting an existing decision.
-
-## Verification and data
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-node --check m6_dashboard/dashboard.js
-```
-
-Tests use an isolated database and temporary HTTP server. Local socket access
-must be allowed. APIs include `/health`, `/nodes`, `/cameras`, `/events`,
-`/events-summary`, `/events/{id}/actions` and `PATCH /events/{id}/status`.
-`/docs` provides request schemas. `/events` supports status, active-only,
-node/type and ID pagination filters. The former `/map` route opens Overview.
-
-Database files, recorded videos and generated evidence remain local and ignored
-by Git. Set `EVENTS_DB_PATH` to change the database location. Keep evidence under
-`m6_backend/media/` for serving.
+Uploaded videos, inference outputs, database files, and generated event evidence are local runtime data and should not be committed to Git.
