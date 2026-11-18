@@ -8,6 +8,20 @@ from typing import Any
 from .geometry import angular_difference_deg, point_in_polygon
 
 
+def boundary_distance_px(x: float, y: float, polygon: list[list[float]], width: int, height: int) -> float:
+    """Distance from a pixel-space point to the nearest polygon edge."""
+    best = float("inf")
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        ax, ay = start[0] * width, start[1] * height
+        bx, by = end[0] * width, end[1] * height
+        dx, dy = bx - ax, by - ay
+        denom = dx * dx + dy * dy
+        t = 0.0 if denom == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / denom))
+        best = min(best, hypot(x - (ax + t * dx), y - (ay + t * dy)))
+    return best
+
+
 @dataclass
 class WrongWayState:
     points: deque[dict[str, Any]]
@@ -32,7 +46,12 @@ class WrongWayRule:
         x1, y1, x2, y2 = detection["bbox"]
         x = (x1 + x2) / 2.0 / self.frame_width
         y = (y1 + y2) / 2.0 / self.frame_height
-        if not point_in_polygon(x, y, zone["polygon"]):
+        boundary_margin = float(zone.get("boundary_margin_px", 0.0))
+        near_boundary = boundary_margin > 0 and boundary_distance_px(
+            x * self.frame_width, y * self.frame_height, zone["polygon"],
+            self.frame_width, self.frame_height,
+        ) < boundary_margin
+        if not point_in_polygon(x, y, zone["polygon"]) or near_boundary:
             state.points.clear()
             state.violating_windows = 0
             state.emitted = False

@@ -209,12 +209,15 @@ def main() -> int:
         except ValueError as exc:
             raise ValueError("evidence_dir must be inside m6_backend/media for API serving") from exc
         source_start = config["source_start_ts"]
+        source_timestamp(source_start, 0)  # Validate recording time before extracting any evidence.
         response = requests.get(f"{api_url}/health", timeout=5)
         response.raise_for_status()
         print(f"Uploading {len(events)} events to {api_url}/events via {node_id}/{cam_id}")
         for index, (line_no, event) in enumerate(events, start=1):
             video_ts = validate_engine_event(event, line_no)
-            stem = f"event_{index:03d}_track_{event['track_id']}"
+            identity = f"{source.resolve()}|{source_start}|{video_ts}|{event['type']}|{event['track_id']}"
+            suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            stem = f"event_{index:03d}_track_{event['track_id']}_{suffix}"
             snapshot_path = evidence_dir / f"{stem}.jpg"
             clip_path = evidence_dir / f"{stem}.mp4"
             bbox = event.get("bbox")
@@ -233,6 +236,7 @@ def main() -> int:
                 "node_id": node_id,
                 "cam_id": cam_id,
                 "ts": source_timestamp(source_start, video_ts),
+                "video_ts_s": video_ts,
                 "type": event["type"],
                 "track_id": event["track_id"],
                 "class": event["class"],

@@ -1,76 +1,95 @@
-# M6 dashboard and M5 event-sender demo
+# VEYAKSH traffic operations dashboard
 
-The dashboard is served by the FastAPI backend. Open it through the API so the map, event polling, snapshots, and media links use the same origin.
+For manual startup, run `start_dashboard.ps1` from the project root in PowerShell.
+The launcher pins the project path and checks for the standard dashboard before
+reusing a running server. Open its printed URL; press Ctrl+Shift+R if an older
+browser tab still displays the Sentinel page.
 
-## Windows setup
-
-From the project root, install the Python dependencies once:
-
-```powershell
-cd C:\Users\91639\OneDrive\Desktop\projects\veyaksh_project
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Install FFmpeg and make sure `ffmpeg` is available on `PATH`. The sender uses OpenCV to extract the event frame and FFmpeg to create a three-second H.264 clip.
-
-## Start the backend
-
-In terminal 1:
+Run from the repository root:
 
 ```powershell
-cd C:\Users\91639\OneDrive\Desktop\projects\veyaksh_project
 .\.venv\Scripts\python.exe -m uvicorn m6_backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-If port 8000 is already in use, the API may already be running. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) and check that the dashboard reports the API as connected. After pulling code changes, stop an older server with `Ctrl+C` in its terminal and restart it so it loads the updated snapshot API. Do not start another server on the same port.
+Open http://127.0.0.1:8000/ for the integrated map, CCTV recordings and evidence
+trail, or http://127.0.0.1:8000/history for the permanent event record. Restart
+an older backend after updating this code. The API and dashboard share an origin.
 
-## Run a detector result through to the dashboard
+## New surveyed recordings
 
-From the repository root, after the video, `models/best.pt`, and calibrated zone file are in place, one command runs YOLO/ByteTrack and the M3 rules, starts the local backend if necessary, sends events through M5, and opens the dashboard:
+Add browser-compatible H.264 MP4 files at these exact paths:
+
+- `m6_backend/media/camera_recordings/point_1.mp4`: N01 / C01,
+  29°51'50.2"N 77°53'43.5"E.
+- `m6_backend/media/camera_recordings/point_2.mp4`: N02 / C02,
+  29°51'53.8"N 77°54'03.0"E.
+
+The CCTV panel discovers added recordings within two seconds without a restart.
+Click either blue map marker or the corresponding camera selector. The separate
+video upload button has been removed. `configs/cameras.json` supports multiple
+saved recordings per camera; set the actual timezone-aware `start_ts` when known.
+See `m6_backend/media/camera_recordings/README.md` for more details.
+
+The old clips are invalid for these surveyed locations. On first upgrade,
+existing events become archived legacy records in History. They do not activate
+the new camera pins, appear in the evidence queue, or expose their old footage.
+No historical records are deleted. Only the two surveyed nodes appear on the map.
+
+## Analyse and publish events
+
+Adding a recording enables playback; it does not run inference. Run the existing
+YOLO/ByteTrack and M3 rule pipeline on the new footage with zones calibrated for
+each camera. Publish the resulting JSONL events through M5 with the matching
+configuration. Set `source_start_ts` to the actual recording start time first;
+the placeholder intentionally prevents publishing events with invented times.
 
 ```powershell
-python scripts/run_detection_dashboard.py --video data/test.mp4 --model models/best.pt --zones configs/zones/C01.json --device cpu
+.\.venv\Scripts\python.exe m5_edge_agent/send_events.py --config m5_edge_agent/point_1.config.json --events runs/point_1_events.jsonl
+.\.venv\Scripts\python.exe m5_edge_agent/send_events.py --config m5_edge_agent/point_2.config.json --events runs/point_2_events.jsonl
 ```
 
-If tracks already exist, skip the YOLO pass and publish them through the rules and dashboard with `--tracks runs/m3/test_tracks.jsonl`. This is an offline saved-video flow. Live RTSP inference is not wired into the dashboard yet. If FFmpeg is unavailable, M5 links the original local video at the event timestamp instead of making a short excerpt.
+The default `m5_edge_agent/config.json` also targets Point 1. Existing sample
+events and old zone examples are not analyses of the new recordings. Do not use
+them as real evidence for these locations. The sender extracts snapshots and
+three-second clips using FFmpeg, or links the source at the event offset when
+FFmpeg is unavailable. Evidence filenames include a recording/event fingerprint
+so a later recording does not overwrite earlier clips.
 
-## Send the five M5 sample events
+## Review workflow
 
-In terminal 2, from the project root:
+Click Enable sound once after each page load to allow browser audio. Newly
+received events play a tone. Camera markers remain blue until their location
+has an event awaiting review, then blink red until all its active events are
+reviewed. Polling runs every two seconds. Reduced-motion preferences disable
+animation while retaining the red alert indicator.
+
+Review evidence at the bottom of Overview:
+
+- False alert saves a decision and removes the event from the evidence trail.
+- Take action saves a decision and opens response options.
+- Alert authorities saves a timestamped local request. No external delivery
+  service or authority contact is configured; no message is sent.
+
+All events remain in History with their source clip timestamp, exact video
+offset (when provided), current status and decision timestamp. The activity trail
+retains the separate timestamps for each action. Review timestamps are stored in
+UTC and displayed in IST; the source timestamp is preserved unchanged. Duplicate
+submissions of the same review do not create duplicate audit entries. Conflicting
+reviews return an error rather than overwriting an existing decision.
+
+## Verification and data
 
 ```powershell
-.\.venv\Scripts\python.exe m5_edge_agent\send_events.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+node --check m6_dashboard/dashboard.js
 ```
 
-The sender reads `m5_edge_agent/sample_events.jsonl`, applies the node and camera from `m5_edge_agent/config.json`, converts `video_ts_s` to an ISO 8601 source timestamp, extracts one snapshot and one three-second clip for each event, and posts each event to `POST /events`. Event snapshots include a red bounding box and a label when the rule event provides its tracked box. The API stores the event and its snapshot/clip paths; new map pins blink, and the event details show the snapshot and clip link.
+Tests use an isolated database and temporary HTTP server. Local socket access
+must be allowed. APIs include `/health`, `/nodes`, `/cameras`, `/events`,
+`/events-summary`, `/events/{id}/actions` and `PATCH /events/{id}/status`.
+`/docs` provides request schemas. `/events` supports status, active-only,
+node/type and ID pagination filters. The former `/map` route opens Overview.
 
-Open the dashboard first, then run the sender. Five events are uploaded once and the script exits. To space them out by three seconds, use:
-
-```powershell
-.\.venv\Scripts\python.exe m5_edge_agent\send_events.py --interval 3
-```
-
-## Configure a different source video or camera
-
-Edit `m5_edge_agent/config.json`:
-
-- `node_id` must already exist in the backend database (`N01`, `N02`, or `N03` for the sample setup).
-- `cam_id` identifies the source camera.
-- `source_video` is the local video used to extract event snapshots and clips. Use a video at least three seconds long and keep local footage out of Git.
-- `source_start_ts` is the timezone-aware start time of the source recording. Event `ts` is this time plus each JSONL `video_ts_s` offset.
-- `evidence_dir` must remain under `m6_backend/media/`; generated images and clips are local and ignored by Git.
-
-The sample event records use relative video offsets within a four-second local demo clip. If that clip is not present on your machine, set `source_video` to a local video file you are allowed to use and adjust each `video_ts_s` to fit its duration. The sender does not wait for or require the live event engine.
-
-## Check the result
-
-- Dashboard: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
-- API health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-- API event list: [http://127.0.0.1:8000/events?limit=10](http://127.0.0.1:8000/events?limit=10)
-- API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
-Click an item in Latest events to view its event-frame snapshot and open its short clip. The map checks for events every two seconds, so the corresponding camera pin should blink shortly after upload.
-
-## Git and media policy
-
-Database files, raw videos, extracted frames, generated event evidence, and dataset archives are ignored by `.gitignore`. Keep licensed/self-recorded source footage and generated MP4 clips local. The JSONL event examples and sender code are safe to review in Git; the event snapshots are generated locally from the configured video.
+Database files, recorded videos and generated evidence remain local and ignored
+by Git. Set `EVENTS_DB_PATH` to change the database location. Keep evidence under
+`m6_backend/media/` for serving.

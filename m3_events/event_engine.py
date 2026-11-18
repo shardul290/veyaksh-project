@@ -73,6 +73,9 @@ def load_zones(config: dict[str, Any]) -> tuple[int, int, list[dict[str, Any]], 
                 raise ValueError(f"lane {lane['zone_id']}: {key} must be a finite number")
         if not 0 <= lane["allowed_dir_deg"] < 360 or not 0 <= lane["tolerance_deg"] <= 180:
             raise ValueError(f"lane {lane['zone_id']}: heading must be [0, 360), tolerance [0, 180]")
+        boundary_margin = lane.get("boundary_margin_px", 0)
+        if not isinstance(boundary_margin, (int, float)) or not math.isfinite(boundary_margin) or boundary_margin < 0:
+            raise ValueError(f"lane {lane['zone_id']}: boundary_margin_px must be non-negative")
         if lane["min_elapsed_s"] < 0 or not 0 <= lane["min_displacement_ratio"] <= 1:
             raise ValueError(f"lane {lane['zone_id']}: invalid elapsed time or displacement ratio")
         for key in ("min_observations", "required_wrong_windows"):

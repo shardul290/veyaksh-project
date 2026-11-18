@@ -134,7 +134,7 @@ def main() -> int:
         no_park_zones = []
         if input("Add a no-parking/encroachment region? [y/N]: ").strip().lower() in {"y", "yes"}:
             polygon = draw_polygon(frame, "Draw no-parking ROI")
-            dwell = ask_float("Dwell threshold in seconds", 30, 0.1, 86400)
+            dwell = ask_float("Dwell threshold in seconds", 15, 0.1, 86400)
             no_park_zones.append({"zone_id": "NO_PARK_1", "polygon": polygon,
                                   "max_dwell_s": dwell, "max_gap_s": 1.0})
         config = {

@@ -13,15 +13,15 @@ Status: evaluation and tracking outputs were generated in Colab; Git merge reque
 
 ### Per-class validation metrics
 
-| Class | Instances | Precision | Recall | AP@50 | AP@50–95 |
-|---|---:|---:|---:|---:|---:|
-| `two_wheeler` | 3,065 | 0.314 | 0.228 | 0.218 | 0.133 |
-| `auto` | 411 | 0.358 | 0.353 | 0.260 | 0.184 |
-| `e_rickshaw` | 241 | 0.685 | 0.332 | 0.315 | 0.234 |
-| `car` | 2,346 | 0.669 | 0.384 | 0.389 | 0.265 |
-| `bus_truck` | 2,226 | 0.494 | 0.093 | 0.0916 | 0.0586 |
-| `cart` | 610 | 0.000 | 0.000 | 0.000 | 0.000 |
-| `pedestrian` | 3,253 | 0.253 | 0.00461 | 0.005 | 0.0045 |
+| Class         | Instances | Precision | Recall    | AP@50     | AP@50–95  |
+|---------------|----------:|----------:|----------:|----------:|----------:|
+| `two_wheeler` | 3,065     | 0.314     | 0.228     | 0.218     | 0.133     |
+| `auto`        | 411       | 0.358     | 0.353     | 0.260     | 0.184     |
+| `e_rickshaw`  | 241       | 0.685     | 0.332     | 0.315     | 0.234     |
+| `car`         | 2,346     | 0.669     | 0.384     | 0.389     | 0.265     |
+| `bus_truck`   | 2,226     | 0.494     | 0.093     | 0.0916    | 0.0586    |
+| `cart`        | 610       | 0.000     | 0.000     | 0.000     | 0.000     |
+| `pedestrian`  | 3,253     | 0.253     | 0.00461   | 0.005     | 0.0045    |
 
 The confusion-matrix plots and normalized plot were saved under `VEYAKSH_TRAFFIC_DATASET/models/task2_7_eval/heldout_clip_eval/` in Drive.
 

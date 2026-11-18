@@ -10,7 +10,7 @@ Use the calibration helper with a frame from the target camera. Draw one polygon
 python -m m3_events.calibrate_zones --input data/test.mp4 --frame 0 --node-id N01 --cam-id C01 --output configs/zones/C01.json
 ```
 
-For an image, pass its path to `--input`; for a video, use `--frame` to choose a clear frame. In the window, click polygon vertices and press Enter to finish; Backspace undoes the last point and R resets the polygon. For each heading, click a point on that lane and then a second point in the permitted direction. Answer yes to “Add another directional lane?” to calibrate the opposing flow. The tool then asks whether to add an encroachment polygon and its dwell threshold.
+For an image, pass its path to `--input`; for a video, use `--frame` to choose a clear frame. In the window, click polygon vertices and press Enter to finish; Backspace undoes the last point and R resets the polygon. For each heading, click a point on that lane and then a second point in the permitted direction. Answer yes to “Add another directional lane?” to calibrate the opposing flow. The tool then asks whether to add an encroachment polygon and its dwell threshold (15 seconds by default).
 
 The example file is a template only. Review the generated values before running on real footage:
 
@@ -23,6 +23,7 @@ The example file is a template only. Review the generated values before running 
 
 - `wrong_way` compares the vehicle-centre path over a sliding window with the lane's allowed heading. Defaults require at least 8 observations, 0.75 seconds of movement, displacement of at least 1.5% of the frame diagonal, and 3 consecutive wrong-heading windows. A track gap longer than `max_track_gap_s` resets its history.
 - `min_track_class_consistency` can suppress tracks whose predicted class changes repeatedly. It is a track-quality filter, not a class correction; set it only when class flicker is causing unreliable track IDs.
+- `boundary_margin_px` can make points close to a lane boundary ambiguous and exclude them from wrong-way decisions. This avoids treating a vehicle near a divider as belonging confidently to either flow.
 - `encroachment` starts timing when a vehicle-centre enters a no-parking polygon. It emits once after `max_dwell_s`; a detection gap beyond the zone's `max_gap_s` restarts dwell timing. Leaving the polygon resets the rule.
 
 These rules need calibrated zones and clip review. The detector's class confidence is not a calibrated event probability; tracking errors, occlusion, perspective, and sparse detections can still cause missed or false events.
