@@ -1,4 +1,4 @@
-"""Apply wrong-way and no-parking dwell rules to M2 ByteTrack JSONL output.
+"""Apply vehicle and pedestrian path rules to M2 ByteTrack JSONL output.
 
 The output is an intermediate event JSONL accepted by m5_edge_agent/send_events.py.
 That sender adds the ISO timestamp and evidence paths required by the M6 schema.
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from m3_events.rules.encroachment import EncroachmentRule
+from m3_events.rules.pedestrian_path import PedestrianPathRule, validate_pedestrian_config
 from m3_events.rules.wrong_way import WrongWayRule
 
 VEHICLE_CLASSES = {"car", "two_wheeler", "auto", "e_rickshaw", "bus_truck", "cart"}
@@ -57,8 +58,8 @@ def load_zones(config: dict[str, Any]) -> tuple[int, int, list[dict[str, Any]], 
 
     lanes = config.get("lanes", [])
     no_park = config.get("no_park_zones", [])
-    if not isinstance(lanes, list) or not isinstance(no_park, list) or not (lanes or no_park):
-        raise ValueError("zone config must include at least one lane or no_park_zone")
+    if not isinstance(lanes, list) or not isinstance(no_park, list) or not (lanes or no_park or config.get("pedestrian_zones")):
+        raise ValueError("zone config must include at least one lane, no_park_zone or pedestrian_zone")
     used_ids: set[str] = set()
     for lane in lanes:
         if not isinstance(lane, dict) or not isinstance(lane.get("zone_id"), str) or not lane["zone_id"]:
@@ -93,6 +94,7 @@ def load_zones(config: dict[str, Any]) -> tuple[int, int, list[dict[str, Any]], 
             value = zone.get(key)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"zone {zone['zone_id']}: {key} must be positive")
+    validate_pedestrian_config(config, validate_polygon)
     return width, height, lanes, no_park
 
 
@@ -118,7 +120,7 @@ def read_tracks(path: Path) -> dict[int, list[dict[str, Any]]]:
                 raise ValueError(f"{path}:{line_no}: frame must be a non-negative integer")
             if not isinstance(ts, (int, float)) or not math.isfinite(ts) or ts < 0:
                 raise ValueError(f"{path}:{line_no}: ts must be a finite non-negative number")
-            if label not in VEHICLE_CLASSES:
+            if label not in VEHICLE_CLASSES | {"pedestrian"}:
                 continue
             if (not isinstance(bbox, list) or len(bbox) != 4
                     or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in bbox)):
@@ -132,8 +134,8 @@ def read_tracks(path: Path) -> dict[int, list[dict[str, Any]]]:
                 "track_id": track_id, "frame": frame, "ts": float(ts),
                 "bbox": [x1, y1, x2, y2], "class": label, "conf": float(conf),
             })
-    if not grouped:
-        raise ValueError(f"No usable tracked vehicle detections found in {path}")
+    # Empty scenes and frames containing only unassigned IDs are valid: they
+    # produce no events, rather than failing an otherwise successful video job.
     for rows in grouped.values():
         rows.sort(key=lambda item: (item["ts"], item["frame"]))
     return grouped
@@ -150,6 +152,8 @@ def run_engine(tracks: dict[int, list[dict[str, Any]]], config: dict[str, Any]) 
 
     wrong_way = WrongWayRule(width, height, max_gap_s)
     encroachment = EncroachmentRule(width, height, max_gap_s)
+    pedestrian = PedestrianPathRule(width, height, config.get("pedestrian_zones", []),
+                                    {"max_gap_s": max_gap_s, **config.get("pedestrian_path", {})})
     events: list[dict[str, Any]] = []
     consistent_detections: list[dict[str, Any]] = []
     for rows in tracks.values():
@@ -168,6 +172,12 @@ def run_engine(tracks: dict[int, list[dict[str, Any]]], config: dict[str, Any]) 
         key=lambda item: (item["ts"], item["frame"], item["track_id"]),
     )
     for detection in detections:
+        if detection["class"] == "pedestrian":
+            decision, event = pedestrian.update(detection)
+            detection["path"] = decision
+            if event:
+                events.append(event)
+            continue
         for lane in lanes:
             event = wrong_way.update(detection, lane)
             if event:
@@ -188,6 +198,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracks", required=True, type=Path, help="M2 ByteTrack JSONL for one video")
     parser.add_argument("--zones", required=True, type=Path, help="Calibrated per-camera zone JSON")
+    parser.add_argument("--classified-tracks", type=Path, help="Optional tracks JSONL with pedestrian path decisions")
     parser.add_argument("--output", required=True, type=Path, help="M5-compatible intermediate events JSONL")
     args = parser.parse_args()
     try:
@@ -195,7 +206,13 @@ def main() -> int:
             raise FileNotFoundError(f"Tracks file not found: {args.tracks}")
         if not args.zones.is_file():
             raise FileNotFoundError(f"Zone config not found: {args.zones}")
-        events = run_engine(read_tracks(args.tracks), read_json(args.zones))
+        tracks = read_tracks(args.tracks)
+        events = run_engine(tracks, read_json(args.zones))
+        if args.classified_tracks:
+            args.classified_tracks.parent.mkdir(parents=True, exist_ok=True)
+            with args.classified_tracks.open("w", encoding="utf-8") as classified:
+                for row in sorted((r for rows in tracks.values() for r in rows), key=lambda r: (r["ts"], r["track_id"])):
+                    classified.write(json.dumps(row) + "\n")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", encoding="utf-8", newline="\n") as stream:
             for event in events:

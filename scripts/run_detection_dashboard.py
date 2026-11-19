@@ -107,8 +107,8 @@ def main() -> int:
         if args.tracks:
             print(f"Reusing tracking export: {tracks}")
             subprocess.run(
-                [sys.executable, "-m", "m3_events.event_engine", "--tracks", str(tracks),
-                 "--zones", str(zones_path), "--output", str(events)],
+                [sys.executable, "-m", "m3_events.prepare_playback", "--video", str(video), "--tracks", str(tracks),
+                 "--zones", str(zones_path), "--output-dir", str(output_dir)],
                 cwd=ROOT, check=True,
             )
         else:

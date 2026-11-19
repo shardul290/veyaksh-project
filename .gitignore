@@ -33,3 +33,15 @@ VEYAKSH_TRAFFIC_DATASET*/
 
 # Private TLS key
 auto.key
+
+# Runtime artifacts and local model checkpoints
+data/
+runs/
+tracks/
+reports/
+*.pt
+*.db-*
+*.sqlite3*
+.env
+.env.*
+!.env.example

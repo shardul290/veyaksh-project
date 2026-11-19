@@ -275,3 +275,7 @@ data/golden/             golden test clip and labels
 m1_ingest/ ... m6_dashboard/   one folder per module
 scripts/run_pipeline.py  single entry point, wired up as modules land
 ```
+
+## Pedestrian right-path / wrong-path detection
+
+Implemented in `m3_events/rules/pedestrian_path.py`. See [pedestrian setup and algorithm](m3_events/PEDESTRIAN_PATH.md) for calibration, video overlays, thresholds, outputs, and verification.

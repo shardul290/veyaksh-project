@@ -106,6 +106,7 @@ def ask_float(label: str, default: float, minimum: float, maximum: float) -> flo
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pedestrian-only", action="store_true", help="Draw road, footpath and zebra-crossing zones only")
     parser.add_argument("--input", required=True, type=Path, help="Camera image or video")
     parser.add_argument("--frame", type=int, default=0, help="Video frame index to show")
     parser.add_argument("--node-id", default="N01")
@@ -118,7 +119,7 @@ def main() -> int:
         frame = read_frame(args.input, args.frame)
         height, width = frame.shape[:2]
         lanes = []
-        while True:
+        while not args.pedestrian_only:
             lane_number = len(lanes) + 1
             lane_polygon = draw_polygon(frame, f"Draw directional lane ROI {lane_number}")
             heading = draw_heading(frame)
@@ -137,11 +138,22 @@ def main() -> int:
             dwell = ask_float("Dwell threshold in seconds", 15, 0.1, 86400)
             no_park_zones.append({"zone_id": "NO_PARK_1", "polygon": polygon,
                                   "max_dwell_s": dwell, "max_gap_s": 1.0})
+        pedestrian_zones = []
+        if args.pedestrian_only or input("Add pedestrian path zones? [y/N]: ").strip().lower() in {"y", "yes"}:
+            for kind in ("road", "footpath", "zebra_crossing"):
+                while input(f"Draw a {kind} region? [y/N]: ").strip().lower() in {"y", "yes"}:
+                    polygon = draw_polygon(frame, f"Draw {kind} ground area")
+                    pedestrian_zones.append({"zone_id": f"{kind.upper()}_{len(pedestrian_zones)+1}", "kind": kind, "polygon": polygon})
+            if not any(z["kind"] == "road" for z in pedestrian_zones):
+                raise ValueError("Draw at least one road zone for pedestrian wrong-path detection")
         config = {
             "node_id": args.node_id, "cam_id": args.cam_id,
             "frame_size": {"width": width, "height": height},
             "max_track_gap_s": 1.0, "lanes": lanes, "no_park_zones": no_park_zones,
+            "pedestrian_zones": pedestrian_zones,
         }
+        from m3_events.event_engine import load_zones
+        load_zones(config)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         print(f"Saved calibrated zones to {args.output}")
