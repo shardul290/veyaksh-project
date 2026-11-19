@@ -1,5 +1,7 @@
 # VEYAKSH traffic operations dashboard
 
+Pedestrian path labels and video-time event popups are now supported for prepared camera recordings. See [playback setup and behavior](../m3_events/PEDESTRIAN_PATH.md#video-time-alerts-in-the-dashboard). The monitored video keeps playing while a non-modal alert appears; encountering an event saves it once to the evidence trail.
+
 For manual startup, run `start_dashboard.ps1` from the project root in PowerShell.
 The launcher pins the project path and checks for the standard dashboard before
 reusing a running server. Open its printed URL; press Ctrl+Shift+R if an older

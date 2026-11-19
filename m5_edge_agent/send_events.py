@@ -17,11 +17,14 @@ from typing import Any
 import cv2
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from m3_events.playback import draw_detection, source_identity, event_key
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path(__file__).with_name("config.json")
 DEFAULT_EVENTS = Path(__file__).with_name("sample_events.jsonl")
-ALLOWED_TYPES = {"wrong_way", "encroachment"}
-ALLOWED_CLASSES = {"two_wheeler", "auto", "e_rickshaw", "car", "bus_truck", "cart"}
+ALLOWED_TYPES = {"wrong_way", "encroachment", "pedestrian_wrong_path"}
+ALLOWED_CLASSES = {"two_wheeler", "auto", "e_rickshaw", "car", "bus_truck", "cart", "pedestrian"}
 CLIP_SECONDS = 3.0
 
 
@@ -87,7 +90,7 @@ def extract_snapshot(
     bbox: list[float] | None = None,
     label: str | None = None,
 ) -> None:
-    capture = cv2.VideoCapture(str(source))
+    capture = cv2.VideoCapture(str(source), cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 2])
     try:
         if not capture.isOpened():
             raise RuntimeError(f"OpenCV could not open source video: {source}")
@@ -104,17 +107,7 @@ def extract_snapshot(
             x1, x2 = max(0, min(width - 1, x1)), max(0, min(width - 1, x2))
             y1, y2 = max(0, min(height - 1, y1)), max(0, min(height - 1, y2))
             if x2 > x1 and y2 > y1:
-                red = (0, 0, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), red, thickness=max(2, width // 500))
-                text = label or "EVENT"
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                scale = max(0.5, width / 1600)
-                text_size, baseline = cv2.getTextSize(text, font, scale, 2)
-                text_y = max(text_size[1] + baseline + 4, y1)
-                cv2.rectangle(frame, (x1, text_y - text_size[1] - baseline - 4),
-                              (min(width - 1, x1 + text_size[0] + 8), text_y + 2), red, -1)
-                cv2.putText(frame, text, (x1 + 4, text_y - baseline), font, scale,
-                            (255, 255, 255), 2, cv2.LINE_AA)
+                draw_detection(frame, {"bbox": [x1, y1, x2, y2], "class": "event", "track_id": ""}, alert=True, text=label)
         target.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, 90]):
             raise RuntimeError(f"Could not write snapshot: {target}")
@@ -246,6 +239,12 @@ def main() -> int:
                 "snapshot": f"{evidence_relative}/{snapshot_path.name}",
                 "clip": clip_value,
             }
+            try:
+                identity = source_identity(source)
+                payload["source_recording"] = identity["path"]
+                payload["event_key"] = event_key(identity, event, node_id, cam_id)
+            except ValueError:
+                pass  # External input videos have no surveyed-camera recording identity.
             result = requests.post(f"{api_url}/events", json=payload, timeout=15)
             if not result.ok:
                 raise RuntimeError(f"API rejected line {line_no} (HTTP {result.status_code}): {result.text}")

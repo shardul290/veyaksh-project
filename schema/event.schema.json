@@ -35,7 +35,8 @@
       "type": "string",
       "enum": [
         "wrong_way",
-        "encroachment"
+        "encroachment",
+        "pedestrian_wrong_path"
       ]
     },
     "track_id": {
@@ -51,7 +52,8 @@
         "e_rickshaw",
         "cart",
         "pedestrian",
-        "other"
+        "other",
+        "bus_truck"
       ]
     },
     "conf": {
@@ -99,6 +101,33 @@
       "type": "string",
       "minLength": 1,
       "description": "Source video clip filename."
+    },
+    "source_recording": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "event_key": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "snapshot": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "video_ts_s": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
     }
   }
 }

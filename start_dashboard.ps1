@@ -29,6 +29,14 @@ try {
 if ($existingResponse) {
     if ($existingResponse.Content.Contains('id="nav-history"') -and
         $existingResponse.Content.Contains('/dashboard-assets/dashboard.js')) {
+        try {
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 3
+        } catch {
+            throw "The dashboard server is unavailable. Restart its terminal, then run this launcher again."
+        }
+        if ($health.playback_analysis -ne 'v1') {
+            throw "An older backend is still running on port $Port. Stop its terminal with Ctrl+C, then run this launcher again. The updated frontend needs the playback analysis API to draw boxes."
+        }
         Write-Host 'The standard dashboard is already running. Open the URL above.'
         Write-Host 'If an old browser tab still shows Sentinel, press Ctrl+Shift+R.'
         return

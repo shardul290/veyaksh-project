@@ -31,10 +31,16 @@ class WorkflowTests(unittest.TestCase):
         cls.base=f'http://127.0.0.1:{cls.port}'
         # The Windows venv launcher spawns a child; run the interpreter directly
         # so terminate/wait also releases the server's database handles.
-        cls.server=subprocess.Popen([os.sys._base_executable,'-m','uvicorn','m6_backend.main:app','--host','127.0.0.1','--port',str(cls.port)],cwd=ROOT,env={**os.environ,'EVENTS_DB_PATH':str(cls.db),'PYTHONPATH':str(ROOT/'.venv/Lib/site-packages')},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Use packages belonging to the interpreter running these tests. A
+        # hard-coded .venv may contain CPython 3.12 extensions under Python 3.11.
+        package_paths = os.pathsep.join(p for p in os.sys.path if p.endswith('site-packages'))
+        cls.server=subprocess.Popen([os.sys._base_executable,'-m','uvicorn','m6_backend.main:app','--host','127.0.0.1','--port',str(cls.port)],cwd=ROOT,env={**os.environ,'EVENTS_DB_PATH':str(cls.db),'PYTHONPATH':package_paths},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(200):
+            if cls.server.poll() is not None:
+                raise RuntimeError('Test API exited during startup')
             try:
-                cls.request('GET','/health'); break
+                with urlopen(cls.base+'/health',timeout=.2):
+                    break
             except Exception:
                 time.sleep(.1)
         else:
@@ -93,6 +99,18 @@ class WorkflowTests(unittest.TestCase):
         ids=[self.create() for _ in range(3)]
         page=self.request('GET',f'/events?before_id={ids[-1]}&limit=2')
         self.assertEqual([e['id'] for e in page],list(reversed(ids[:-1])))
+
+    def test_pedestrian_event_can_be_stored_filtered_and_reviewed(self):
+        payload = {'node_id':'N01','cam_id':'C01','ts':'2026-11-19T10:30:00+05:30',
+                   'type':'pedestrian_wrong_path','track_id':91,'class':'pedestrian',
+                   'conf':.88,'zone_id':'ROAD_1','plate':None,'clip':'pedestrian.mp4',
+                   'video_ts_s':2.5}
+        eid = self.request('POST', '/events', payload)['id']
+        rows = self.request('GET', '/events?type=pedestrian_wrong_path')
+        event = next(row for row in rows if row['id'] == eid)
+        self.assertEqual(event['class'], 'pedestrian')
+        self.assertIsNone(event['plate'])
+        self.request('PATCH', f'/events/{eid}/status', {'status':'false_alert'})
 
     def test_pages_and_recording_config(self):
         for path in ['/','/map','/history','/dashboard-assets/dashboard.js','/dashboard-assets/dashboard.css']:

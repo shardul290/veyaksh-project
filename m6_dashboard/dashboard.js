@@ -4,13 +4,13 @@ const historyPage = location.pathname === "/history";
 const labels = {pending:"Awaiting review",false_alert:"False alert",action_taken:"Action taken",authority_requested:"Authority alert requested",archived:"Archived"};
 let nodes = [], cameras = [], events = [], selectedCamera = null, selectedEvent = null;
 let markers = new Map(), map, initialized = false, lastId = 0, polling = false, more = false;
-let soundEnabled = false, audioContext, reviewBusy = false;
+let soundEnabled = false, audioContext, reviewBusy = false, cameraSelection = 0;
 const fmt = value => {
   if (!value) return "Not recorded";
   const parsed = new Date(/^[\d-]+ [\d:]+$/.test(value) ? value.replace(" ","T")+"Z" : value);
   return Number.isNaN(parsed.getTime()) ? "Invalid timestamp" : new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(parsed) + " IST";
 };
-const typeName = value => value === "wrong_way" ? "Possible wrong way" : value === "encroachment" ? "Encroachment" : value;
+const typeName = value => value === "pedestrian_wrong_path" ? "Pedestrian wrong path" : value === "wrong_way" ? "Possible wrong way" : value === "encroachment" ? "Encroachment" : value;
 const nodeName = id => nodes.find(n => n.node_id === id)?.name || id;
 function element(tag, text, className) { const el = document.createElement(tag); if(text !== undefined) el.textContent = text; if(className) el.className = className; return el; }
 function badge(status) { return element("span",labels[status] || status,"badge "+status); }
@@ -26,7 +26,7 @@ function mediaUrl(value) {
 }
 async function api(url, options={}) {
   const response = await fetch(url,{cache:"no-store",...options,headers:{Accept:"application/json",...options.headers}});
-  if(!response.ok) { let detail; try { detail=(await response.json()).detail; } catch {} throw new Error(typeof detail === "string" ? detail : `Request failed (${response.status}).`); }
+  if(!response.ok) { let detail; try { detail=(await response.json()).detail; } catch {} const error=new Error(typeof detail === "string" ? detail : `Request failed (${response.status}).`);error.status=response.status;throw error; }
   return response.json();
 }
 function beep() {
@@ -65,19 +65,20 @@ function renderCameraInventory() {
   const inventory=$("#camera-selector");inventory.replaceChildren();
   for(const node of nodes) {
     const camera=cameras.find(c=>c.node_id===node.node_id), available=(camera?.recordings || []).length>0;
-    const card=element("div",undefined,"camera-presence"), name=element("strong",`${node.name} · ${camera?.cam_id || "Camera"}`), status=element("span",available?"Recording ready":"No recording",available?"camera-status ready":"camera-status missing");
-    card.dataset.node=node.node_id;card.append(name,status);inventory.append(card);
+    const card=element("button",undefined,"camera-presence"), name=element("strong",`${node.name} · ${camera?.cam_id || "Camera"}`), status=element("span",available?"Recording ready":"No recording",available?"camera-status ready":"camera-status missing");
+    card.type="button";card.addEventListener("click",()=>selectCamera(node.node_id));card.dataset.node=node.node_id;card.append(name,status);inventory.append(card);
   }
 }
 function stopCameraPlayback() {
-  selectedCamera=null;$("#camera-title").textContent="Camera availability";
+  cameraSelection++;clearPlayback();selectedCamera=null;$("#camera-title").textContent="Camera availability";
   const player=$("#camera-video");player.pause();player.removeAttribute("src");player.load();player.hidden=true;
   $("#camera-stop").hidden=true;$("#camera-empty").hidden=false;
   $("#camera-empty strong").textContent="Camera locations ready";
   $("#camera-empty p").textContent="Choose a blue marker on the map to open its demo recording.";
   $("#recording-info").textContent="Video appears here only after you select a map marker.";
 }
-function selectCamera(id) {
+async function selectCamera(id) {
+  const selection=++cameraSelection;
   selectedCamera=id;
   const camera=cameras.find(c=>c.node_id===id), node=nodes.find(n=>n.node_id===id);
   $("#camera-title").textContent=`${node?.name || id} · ${camera?.cam_id || ""}`;
@@ -87,10 +88,13 @@ function selectCamera(id) {
   $("#recordings").replaceChildren();
   $("#recording-info").textContent=`${node?.lat.toFixed(7)}° N, ${node?.lon.toFixed(7)}° E`;
   const recording=camera?.recordings?.[0], url=mediaUrl(recording?.path);
-  if(!url)return;
-  player.src=url;player.loop=true;player.muted=true;player.hidden=false;$("#camera-empty").hidden=true;$("#camera-stop").hidden=false;
+  if(!url){clearPlayback();return;}
+  player.autoplay=false;player.src=url;player.loop=true;player.muted=true;player.hidden=false;$("#camera-empty").hidden=true;$("#camera-stop").hidden=false;
   $("#recording-info").textContent=`Now playing on loop · ${fmt(recording.start_ts)} · ${node.lat.toFixed(7)}° N, ${node.lon.toFixed(7)}° E`;
-  player.load();player.play().catch(()=>{$("#recording-info").textContent="Click Play in the video controls to start playback.";});
+  player.controls=false;player.load();
+  await loadPlaybackAnalysis(camera,recording);
+  if(selection!==cameraSelection)return;
+  player.controls=true;player.play().catch(()=>{$("#recording-info").textContent="Click Play in the video controls to start playback.";});
 }
 $("#camera-stop").addEventListener("click",()=>{const player=$("#camera-video");player.pause();player.currentTime=0;$("#camera-stop").hidden=true;$("#recording-info").textContent="Playback stopped. Use the video controls to play again, or select a map marker to restart.";});
 $("#camera-video").addEventListener("play",()=>{$("#camera-stop").hidden=false;});
@@ -103,7 +107,7 @@ function render() {
   for(const event of pending) {
     const card=element("article",undefined,"evidence-card"), thumb=element("div",undefined,"evidence-thumb"), content=element("div",undefined,"evidence-content");
     const src=mediaUrl(event.snapshot);
-    if(src) {const img=element("img");img.src=src;img.alt="Event frame snapshot";img.loading="lazy";img.onerror=()=>{thumb.textContent="Frame unavailable";};thumb.append(img);} else thumb.textContent="No frame attached";
+    if(src) {const img=element("img");img.src=src;img.alt="Event frame snapshot";img.loading="lazy";img.onerror=()=>{thumb.textContent="Frame unavailable";};thumb.append(img);} else thumb.textContent=event.evidence_state==="pending"?"Preparing event frame…":"No frame attached";
     const review=element("button","Review evidence →");review.type="button";review.addEventListener("click",()=>showEvent(event));
     const stamp=element("p");stamp.append(time(event.ts));
     content.append(badge(event.status),element("h3",typeName(event.type)),element("p",`${nodeName(event.node_id)} · ${event.cam_id} · Event #${event.id}`),stamp,review);card.append(thumb,content);queue.append(card);
@@ -120,7 +124,7 @@ function render() {
   updateMarkers();
 }
 async function showEvent(event) {
-  if(!historyPage)stopCameraPlayback();
+  if(!historyPage)$("#camera-video").pause();
   selectedEvent=event;$("#event-title").textContent=`${typeName(event.type)} · #${event.id}`;$("#review-error").textContent="";$("#media-error").textContent="";
   const video=$("#event-video"), img=$("#event-image");video.pause();video.removeAttribute("src");video.load();video.hidden=true;img.hidden=true;img.removeAttribute("src");
   if(event.archived) {$("#media-error").textContent="Legacy recording retained for audit. Its footage is no longer valid for the surveyed locations.";}
@@ -129,7 +133,7 @@ async function showEvent(event) {
     const snapshot=mediaUrl(event.snapshot);if(snapshot){img.src=snapshot;img.hidden=false;}
   }
   const fields=$("#event-details");fields.replaceChildren();
-  for(const [label,value] of [["Clip timestamp",fmt(event.ts)],["Video offset",event.video_ts_s == null ? "Not recorded" : `${event.video_ts_s.toFixed(3)} seconds`],["Camera",`${event.cam_id} / ${event.archived ? "Legacy location" : nodeName(event.node_id)}`],["Status",event.archived ? "Archived legacy recording" : labels[event.status]],["Status timestamp",fmt(event.status_at)],["Received",fmt(event.received_at)],["Vehicle class",event.class],["Detector confidence",`${(event.conf*100).toFixed(1)}%`],["Plate",event.plate?.text || "Not recorded"]]) fields.append(element("dt",label),element("dd",value));
+  for(const [label,value] of [["Clip timestamp",fmt(event.ts)],["Video offset",event.video_ts_s == null ? "Not recorded" : `${event.video_ts_s.toFixed(3)} seconds`],["Camera",`${event.cam_id} / ${event.archived ? "Legacy location" : nodeName(event.node_id)}`],["Status",event.archived ? "Archived legacy recording" : labels[event.status]],["Status timestamp",fmt(event.status_at)],["Received",fmt(event.received_at)],["Object class",event.class],["Detector confidence",`${(event.conf*100).toFixed(1)}%`],["Plate",event.plate?.text || "Not recorded"]]) fields.append(element("dt",label),element("dd",value));
   $("#false-alert").hidden=event.status!=="pending" || Boolean(event.archived);$("#take-action").hidden=!["pending","action_taken"].includes(event.status) || Boolean(event.archived);$("#take-action").textContent=event.status==="action_taken" ? "Response options" : "Take action";
   $("#activity").replaceChildren(element("li",`Event recorded · ${fmt(event.ts)}`));
   if(!$("#evidence-dialog").open) $("#evidence-dialog").showModal();
@@ -155,7 +159,7 @@ async function refresh() {
   if(polling)return;polling=true;
   try {
     const [latest,pending]=await Promise.all([api("/events?limit=100"),api("/events?status=pending&active=true&limit=500")]);
-    if(initialized && latest.some(e=>e.id>lastId && !e.archived && e.status==="pending")){beep();}
+    if(initialized && latest.some(e=>e.id>lastId && !e.archived && e.status==="pending" && e.node_id!==selectedCamera)){beep();}
     const fresh=new Map([...latest,...pending].map(e=>[e.id,e]));
     // Re-fetch loaded pages so reviews made by another operator are reflected too.
     if(initialized && events.length) {
