@@ -1,4 +1,7 @@
 fastapi
 uvicorn[standard]
-opencv-python
+opencv-python>=4.8
 requests
+
+ultralytics>=8.3,<9
+lap>=0.5.12

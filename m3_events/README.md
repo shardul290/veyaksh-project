@@ -60,3 +60,7 @@ Before the M5 command, set its `source_video`, `source_start_ts`, `node_id`, and
 ## Event class contract
 
 The VEYAKSH detector taxonomy includes `bus_truck`, while the prior event schema did not. This branch adds that class to the event schema, M5 validation, and M6 API model so the custom detector's class name passes end to end. Confirm this contract addition with the project maintainer before merging or deploying it.
+
+## Pedestrian path and synchronized playback
+
+See [PEDESTRIAN_PATH.md](PEDESTRIAN_PATH.md) for the foot-contact rule, compact overlays, source-bound playback analysis, event-time popups, persistence, and commands for Point 1 / Point 2.

@@ -43,14 +43,12 @@ def main() -> int:
     export_command = [sys.executable, str(PROJECT_ROOT / "m2_detect_track" / "export_tracks_jsonl.py"),
          "--video", str(video), "--model", str(model), "--kind", "veyaksh",
          "--output", str(tracks), "--device", args.device, "--imgsz", str(args.imgsz),
-         "--conf", str(args.conf), "--stride", str(args.stride)]
-    if args.annotated_output:
-        annotated_output = args.annotated_output.resolve()
-        export_command.extend(["--annotated-output", str(annotated_output)])
+         "--conf", str(args.conf), "--stride", str(args.stride), "--zones", str(zones)]
     commands = [
         export_command,
-        [sys.executable, "-m", "m3_events.event_engine", "--tracks", str(tracks),
-         "--zones", str(zones), "--output", str(events)],
+        [sys.executable, "-m", "m3_events.prepare_playback", "--video", str(video),
+         "--tracks", str(tracks), "--zones", str(zones), "--output-dir", str(output_dir)]
+        + (["--annotated-output", str(args.annotated_output.resolve())] if args.annotated_output else []),
     ]
     try:
         for command in commands:

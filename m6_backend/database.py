@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from contextlib import closing
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent / "veyaksh.db"
@@ -42,13 +44,22 @@ CAMERA_NODES = (
     ("N02", "Point 2", 29 + 51/60 + 53.8/3600, 77 + 54/60 + 3/3600),
 )
 
+_initialize_lock = threading.Lock()
+
 
 def initialize_database(db_path: Path | str = DB_PATH) -> Path:
+    # Camera playback can encounter several events on the same frame. Keep
+    # first-use migrations serialized while concurrent requests start up.
+    with _initialize_lock:
+        return _initialize_database(db_path)
+
+
+def _initialize_database(db_path: Path | str = DB_PATH) -> Path:
     """Create the schema and seed placeholder nodes without replacing existing data."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.executescript(SCHEMA)
         event_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(events)").fetchall()
@@ -64,10 +75,13 @@ def initialize_database(db_path: Path | str = DB_PATH) -> Path:
             "status": "TEXT NOT NULL DEFAULT 'pending'",
             "status_at": "TEXT",
             "video_ts_s": "REAL",
+            "source_recording": "TEXT",
+            "event_key": "TEXT",
         }.items():
             if name not in event_columns:
                 connection.execute(f"ALTER TABLE events ADD COLUMN {name} {definition}")
         connection.executescript("""
+            CREATE UNIQUE INDEX IF NOT EXISTS events_event_key ON events(event_key) WHERE event_key IS NOT NULL;
             CREATE TABLE IF NOT EXISTS event_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER NOT NULL REFERENCES events(id),
