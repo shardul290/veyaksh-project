@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $projectDirectory = $PSScriptRoot
 $projectPython = Join-Path $projectDirectory '.venv\Scripts\python.exe'
 $dashboardFile = Join-Path $projectDirectory 'm6_dashboard\index.html'
-$dashboardUrl = "http://127.0.0.1:$Port/?dashboard=standard-20261118"
+$dashboardUrl = "http://127.0.0.1:$Port/?dashboard=live-yolo26"
 
 if (-not (Test-Path -LiteralPath $projectPython)) {
     throw "Create the environment first: python -m venv .venv; then .\.venv\Scripts\python.exe -m pip install -r requirements.txt"
@@ -17,7 +17,7 @@ if (-not (Get-Content -LiteralPath $dashboardFile -Raw).Contains('id="nav-histor
 }
 
 Write-Host "Project: $projectDirectory"
-Write-Host 'Dashboard: standard traffic operations'
+Write-Host 'Dashboard: live YOLO26 traffic operations'
 Write-Host "Open: $dashboardUrl"
 
 $existingResponse = $null
@@ -34,8 +34,8 @@ if ($existingResponse) {
         } catch {
             throw "The dashboard server is unavailable. Restart its terminal, then run this launcher again."
         }
-        if ($health.playback_analysis -ne 'v1') {
-            throw "An older backend is still running on port $Port. Stop its terminal with Ctrl+C, then run this launcher again. The updated frontend needs the playback analysis API to draw boxes."
+        if ($health.playback_analysis -ne 'v1' -or $health.live_pipeline -ne 'v1' -or $health.live_sync -ne 'buffered-v2') {
+            throw "An older backend is still running on port $Port. Stop its terminal with Ctrl+C, then run this launcher again to load the live YOLO26 pipeline."
         }
         Write-Host 'The standard dashboard is already running. Open the URL above.'
         Write-Host 'If an old browser tab still shows Sentinel, press Ctrl+Shift+R.'

@@ -3,5 +3,7 @@ uvicorn[standard]
 opencv-python>=4.8
 requests
 
-ultralytics>=8.3,<9
+ultralytics>=8.4.197,<9
 lap>=0.5.12
+psutil>=5.9
+imageio-ffmpeg>=0.6.0,<1

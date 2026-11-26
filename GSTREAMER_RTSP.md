@@ -6,7 +6,7 @@ This pipeline uses `GstRtspServer` to publish one recorded clip at a time at:
 rtsp://localhost:8554/cam1
 ```
 
-`gst_rtsp_server.py` reads and decodes the selected file through GStreamer `uridecodebin` using the machine's D3D12 hardware decoder, downloads decoded frames for processing, scales them while preserving portrait or landscape orientation, paces playback in real time, encodes H.264, and serves RTP over RTSP. When a clip reaches its end, the server seeks back to the beginning so clients remain connected. The default output is limited to 1280 pixels on its longest side and 30 FPS to handle the supplied high-resolution clips smoothly.
+`gst_rtsp_server.py` reads and decodes the selected file through GStreamer `uridecodebin`, scales it while preserving portrait or landscape orientation, paces playback in real time, encodes H.264, and serves RTP over RTSP. If the D3D12 H.264 decoder is installed, the server downloads its frames from D3D12 memory; otherwise it uses a software-compatible conversion path. When a clip reaches its end, the server seeks back to the beginning so clients remain connected. The default output is limited to 1280 pixels on its longest side and 30 FPS to handle the supplied high-resolution clips smoothly.
 
 Use the MSYS2 **UCRT64** terminal so Python, GStreamer, `gst-rtsp-server`, and OpenCV load the matching UCRT64 libraries. From the project folder, start a clip like this:
 
@@ -36,6 +36,27 @@ Do not run the managed client check while a manually started server is already u
 ```bash
 gst-play-1.0 rtsp://localhost:8554/cam1
 ```
+
+## Laptop webcam object-detection demo
+
+The webcam demo publishes the first Windows Media Foundation camera as a local-only RTSP stream, then runs the bundled NanoDet COCO model on that stream. It detects people and common COCO objects. This model does not detect hands or recognize gestures. The demo is preview-only and does not save video. Windows may require desktop-camera access in **Settings → Privacy & security → Camera**.
+
+Stop the 1.1 file server with `Ctrl+C` to free CPU, then start the webcam server in **MSYS2 UCRT64**:
+
+```bash
+cd "/c/Users/Kaushik/Desktop/Traffic Detection"
+MSYS_NO_PATHCONV=1 python gst_webcam_rtsp_server.py --device-index 0 --host 127.0.0.1 --port 8555 --mount /webcam --width 1280 --height 720 --fps 30
+```
+
+Leave it running. It prints `rtsp://127.0.0.1:8555/webcam`; the camera opens when the preview client connects. In a second **PowerShell** terminal, run:
+
+```powershell
+cd "C:\Users\Kaushik\Desktop\Traffic Detection"
+.\.venv\Scripts\Activate.ps1
+python scripts/live_rtsp_object_preview.py --source "rtsp://127.0.0.1:8555/webcam" --model models/object_detection_nanodet_2022nov.onnx --max-width 1280 --conf 0.35 --nms 0.6
+```
+
+Press `Q` or `Esc` in the preview to close it, then press `Ctrl+C` in the UCRT64 terminal to stop the RTSP server. If index 0 is not the laptop camera, try `--device-index 1`; `gst-device-monitor-1.0 Video/Source` can list available camera sources.
 
 ## Current verification
 

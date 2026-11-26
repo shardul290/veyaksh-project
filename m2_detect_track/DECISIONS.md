@@ -64,3 +64,14 @@ Source aliases used in preparation include Bike/Motorcycle → `two_wheeler`; Ri
 - Review the confusion matrix and representative tracks for identity switches, missed/duplicate boxes, and class confusion (especially `auto` versus `e_rickshaw`) before downstream use.
 - Recommended improvements: add diverse labeled clips, increase and balance `cart` and pedestrian examples, review missed small/far objects, improve annotation completeness, and retrain/evaluate on multiple held-out clips when data permits.
 - Remaining delivery step: commit only the intended Task 2.7 artifacts on the `anant/...` working branch and open an MR targeting protected `development`.
+
+## YOLO26s local pilot
+
+The pilot initialized from the official `yolo26s.pt` and trained for two CPU epochs at 416 pixels with the first ten layers frozen. A seeded sample from the original training split contained 24 DATS_2022 and 40 reviewed SHARDUL images. All 61 frames from `muzaffarnagar_clip03` stayed in validation.
+
+| Model | PyTorch mAP50–95 | ONNX mAP50–95 | ONNX + ByteTrack FPS |
+|---|---:|---:|---:|
+| Trained YOLO11s baseline | 0.1256 | 0.1279 | 1.84 |
+| Two-epoch YOLO26s pilot | 0.0429 | 0.0376 | 2.25 |
+
+Accuracy used the 12,152 held-out boxes at 640 pixels. Throughput used one pass over the same first 60 campus video frames on the laptop with ONNX Runtime DirectML, FFmpeg, ByteTrack, confidence 0.15 and stride 1. The YOLO26s export used its NMS-free head. YOLO11s remains the selected checkpoint. The [full Colab run](../notebooks/train_yolo26s_traffic_colab.ipynb) uses all 2,079 training images at 640 pixels and trains all layers for up to 50 epochs.

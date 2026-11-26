@@ -1,29 +1,33 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import json
 import logging
 import re
+import math
+import struct
 import sqlite3
 import subprocess
 import sys
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import cv2
-from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .database import DB_PATH as DEFAULT_DB_PATH, initialize_database
+from .database import DB_PATH as DEFAULT_DB_PATH, initialize_database, load_camera_nodes
 from .playback import load_analysis
 from m3_events.playback import event_key
+from .live import LiveManager
 
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -37,7 +41,7 @@ DB_PATH = Path(os.environ.get("EVENTS_DB_PATH", DEFAULT_DB_PATH))
 MEDIA_DIR = BACKEND_DIR / "media"
 UPLOAD_DIR = ROOT / "data" / "dashboard_uploads"
 JOB_DIR = ROOT / "runs" / "dashboard_jobs"
-MODEL_FILE = ROOT / "models" / "best.pt"
+MODEL_FILE = ROOT / os.environ.get("VEYAKSH_MODEL", "models/yolo26s_traffic.onnx")
 ZONE_DIR = ROOT / "configs" / "zones"
 MAX_VIDEO_BYTES = 1024 * 1024 * 1024
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
@@ -48,7 +52,13 @@ EVIDENCE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="veyaksh-ev
 _SNAPSHOT_PENDING: set[str] = set()
 _SNAPSHOT_LOCK = threading.Lock()
 
-app = FastAPI(title="VEYAKSH Traffic Events API", version="2.0.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    yield
+    await asyncio.to_thread(live_manager.close)
+
+
+app = FastAPI(title="VEYAKSH Traffic Events API", version="3.0.0", lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 app.mount("/dashboard-assets", StaticFiles(directory=ROOT / "m6_dashboard"), name="dashboard-assets")
 
@@ -217,7 +227,8 @@ def brand_logo() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "playback_analysis": "v1"}
+    return {"status": "ok", "playback_analysis": "v1", "detector_model": MODEL_FILE.name,
+            "live_pipeline": "v1", "live_sync": "buffered-v2"}
 
 
 @app.post("/video-jobs", status_code=202)
@@ -253,6 +264,8 @@ async def create_video_job(
         raise HTTPException(status_code=422, detail=f"Invalid zone configuration: {exc}") from exc
 
     with VIDEO_JOBS_LOCK:
+        if live_manager.busy():
+            raise HTTPException(status_code=409, detail="Stop the live session before starting offline analysis.")
         if any(job["state"] in {"queued", "running"} for job in VIDEO_JOBS.values()):
             raise HTTPException(status_code=409, detail="A video is already being processed. Wait for it to finish.")
 
@@ -287,6 +300,9 @@ async def create_video_job(
 
     output_dir = JOB_DIR / job_id
     with VIDEO_JOBS_LOCK:
+        if live_manager.busy() or any(job["state"] in {"queued", "running"} for job in VIDEO_JOBS.values()):
+            upload_path.unlink(missing_ok=True)
+            raise HTTPException(409, "Another analysis started during upload. Stop it before retrying.")
         VIDEO_JOBS[job_id] = {
             "job_id": job_id, "filename": filename,
             "state": "queued", "processed_frames": 0, "event_count": None,
@@ -341,8 +357,10 @@ def get_video_job_detections(job_id: str) -> dict[str, Any]:
 
 @app.post("/events", status_code=201)
 def create_event(event: EventIn) -> dict[str, int]:
-    if {"N01": "C01", "N02": "C02"}.get(event.node_id) != event.cam_id:
-        raise HTTPException(422, "Use the surveyed camera pair N01/C01 or N02/C02")
+    configured = json.loads((ROOT / "configs" / "cameras.json").read_text(encoding="utf-8"))
+    if not any(camera.get("node_id") == event.node_id and camera.get("cam_id") == event.cam_id
+               for camera in configured):
+        raise HTTPException(422, f"Camera {event.cam_id} is not configured at location {event.node_id}.")
     with connect() as db:
         node = db.execute("SELECT 1 FROM nodes WHERE node_id = ?", (event.node_id,)).fetchone()
         if node is None:
@@ -437,11 +455,10 @@ def list_events(
 
 @app.get("/nodes")
 def list_nodes() -> list[dict[str, object]]:
-    with connect() as db:
-        rows = db.execute(
-            "SELECT node_id, name, lat, lon FROM nodes WHERE node_id IN ('N01', 'N02') ORDER BY node_id"
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return [
+        {"node_id": node_id, "name": name, "lat": lat, "lon": lon}
+        for node_id, name, lat, lon in load_camera_nodes()
+    ]
 
 
 class ReviewIn(BaseModel):
@@ -588,3 +605,233 @@ def record_playback_event(cam_id: str, request: PlaybackEventIn) -> dict[str, An
         _queue_playback_snapshot(source, event, snapshot_path, key, result["id"])
     return {**payload.model_dump(by_alias=True), **result, **dict(saved), "archived": False,
             "evidence_state": "ready" if saved["snapshot"] else "pending"}
+
+
+live_manager = LiveManager(ROOT, MEDIA_DIR, lambda payload: create_event(EventIn.model_validate(payload)))
+
+
+def gstreamer_python() -> Path:
+    configured = os.environ.get("GST_PYTHON")
+    return Path(configured) if configured else Path("C:/msys64/ucrt64/bin/python.exe")
+
+
+@app.get("/live-options")
+def live_options() -> dict[str, Any]:
+    cameras = camera_recordings()
+    zones = []
+    for path in sorted(ZONE_DIR.glob("*.json")):
+        if "example" in path.name or "test" in path.name:
+            continue
+        try:
+            config = json.loads(path.read_text(encoding="utf-8-sig"))
+            zones.append({"path": path.relative_to(ROOT).as_posix(), "cam_id": config["cam_id"],
+                          "name": path.stem.replace(".", " · "), "frame_size": config["frame_size"]})
+        except (OSError, ValueError, KeyError):
+            continue
+    sources = [{"path": path.relative_to(ROOT).as_posix(), "name": path.name}
+               for path in sorted((ROOT / "data" / "incoming").glob("*")) if path.suffix.lower() in ALLOWED_VIDEO_SUFFIXES]
+    return {"cameras": [{"cam_id": c["cam_id"], "node_id": c["node_id"], "name": c["name"]} for c in cameras],
+            "zones": zones, "sources": sources, "model": MODEL_FILE.name,
+            "gstreamer_ready": gstreamer_python().is_file()}
+
+
+class LiveSourceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str = Field(min_length=1, max_length=4096)
+    cam_id: str = Field(pattern=r"^C[0-9]+$")
+    zone_config: str | None = None
+    confidence: float = Field(default=0.15, ge=0.01, le=1)
+    browser_input: bool = False
+
+
+@app.post("/live-sessions", status_code=201)
+def start_live_session(request: LiveSourceIn) -> dict[str, Any]:
+    from m3_events.event_engine import load_zones
+    source = request.source.strip().strip('"')
+    is_rtsp = source.lower().startswith(("rtsp://", "rtsps://"))
+    if is_rtsp:
+        from urllib.parse import urlsplit
+        try:
+            parsed = urlsplit(source)
+            if not parsed.hostname:
+                raise ValueError("Missing camera host")
+            parsed.port
+        except ValueError as exc:
+            raise HTTPException(422, "Enter a valid RTSP URL with a host and port.") from exc
+    else:
+        path = Path(source).expanduser()
+        path = (ROOT / path).resolve() if not path.is_absolute() else path.resolve()
+        if not path.is_file() or path.suffix.lower() not in ALLOWED_VIDEO_SUFFIXES:
+            raise HTTPException(422, "Local video was not found. Enter its full path or a project-relative video path.")
+        source = str(path)
+    camera = next((c for c in camera_recordings() if c["cam_id"] == request.cam_id), None)
+    if camera is None:
+        raise HTTPException(422, "Choose a configured camera.")
+    zone_path = (ROOT / (request.zone_config or f"configs/zones/{request.cam_id}.json")).resolve()
+    if not zone_path.is_relative_to(ZONE_DIR.resolve()) or zone_path.suffix != ".json":
+        raise HTTPException(422, "Choose a zone configuration inside configs/zones.")
+    try:
+        zones = json.loads(zone_path.read_text(encoding="utf-8-sig"))
+        load_zones(zones)
+        if (zones["cam_id"], zones["node_id"]) != (camera["cam_id"], camera["node_id"]):
+            raise ValueError("The zone configuration belongs to another camera.")
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(422, f"Invalid camera calibration: {exc}") from exc
+    gst_python = gstreamer_python()
+    if not gst_python.is_file() and not (request.browser_input and not is_rtsp):
+        raise HTTPException(503, "GStreamer Python is missing. Set GST_PYTHON and follow GSTREAMER_SETUP.md.")
+    if not MODEL_FILE.is_file():
+        raise HTTPException(503, "The YOLO26 traffic model is missing.")
+    with VIDEO_JOBS_LOCK:
+        if any(job["state"] in {"queued", "running"} for job in VIDEO_JOBS.values()):
+            raise HTTPException(409, "Wait for offline video analysis to finish before starting a live session.")
+        try:
+            return live_manager.start({
+                "source": source, "source_kind": "rtsp" if is_rtsp else "file",
+                "source_label": request.cam_id + " live stream" if is_rtsp else Path(source).name,
+                "model": str(MODEL_FILE), "gst_python": str(gst_python),
+                "zones": zones, "confidence": request.confidence,
+                "browser_input": request.browser_input and not is_rtsp,
+                "source_identity": ({"size": path.stat().st_size, "mtime_ns": path.stat().st_mtime_ns}
+                                    if not is_rtsp else None),
+            })
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/live-sessions")
+def list_live_sessions() -> list[dict]:
+    return live_manager.list()
+
+
+@app.get("/live-sessions/{session_id}")
+def get_live_session(session_id: str) -> dict:
+    try:
+        return live_manager.snapshot(session_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Live session not found.") from exc
+
+
+@app.post("/live-sessions/{session_id}/stop")
+def stop_live_session(session_id: str) -> dict:
+    try:
+        return live_manager.stop(session_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Live session not found.") from exc
+
+
+@app.post("/live-sessions/{session_id}/frame")
+async def submit_live_frame(session_id: str, request: Request,
+                            ts: float = Query(ge=0), x_playback_token: str = Header(default="")):
+    if not math.isfinite(ts):
+        raise HTTPException(422, "Playback time must be finite.")
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > 2 * 1024 * 1024:
+            raise HTTPException(413, "Preview frame exceeds 2 MiB.")
+    if not content.startswith(b"\xff\xd8") or not content.endswith(b"\xff\xd9"):
+        raise HTTPException(422, "Send a JPEG preview frame.")
+    try:
+        return live_manager.submit_frame(session_id, x_playback_token, ts, bytes(content))
+    except KeyError as exc:
+        raise HTTPException(404, "Live session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/live-sessions/{session_id}/end")
+def end_live_input(session_id: str, x_playback_token: str = Header(default="")):
+    try:
+        live_manager.end_input(session_id, x_playback_token)
+        return {"state": "finishing"}
+    except KeyError as exc:
+        raise HTTPException(404, "Live session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.websocket("/live-sessions/{session_id}/input")
+async def live_input_socket(socket: WebSocket, session_id: str):
+    await socket.accept()
+    publisher = None
+    send_lock = asyncio.Lock()
+    last_detection = None
+
+    async def send_status(status):
+        nonlocal last_detection
+        async with send_lock:
+            await socket.send_json(status)
+            last_detection = status.get("detection_ts_s")
+
+    async def push_detections():
+        while True:
+            await asyncio.sleep(.035)
+            status = await asyncio.to_thread(live_manager.snapshot, session_id)
+            stamp = status.get("detection_ts_s")
+            if stamp is not None and stamp != last_detection:
+                await send_status(status)
+
+    try:
+        auth = await asyncio.wait_for(socket.receive_json(), timeout=10)
+        if not isinstance(auth, dict):
+            raise ValueError("Invalid playback owner")
+        token = auth.get("token", "")
+        with live_manager.lock:
+            session = live_manager.sessions[session_id]
+            if not session["browser_input"] or token != session["input_token"]:
+                raise ValueError("Invalid playback owner")
+        publisher = asyncio.create_task(push_detections())
+        while True:
+            message = await socket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            if message.get("text") == "end":
+                live_manager.end_input(session_id, token)
+                # Keep the result channel open while the final frame is inferred.
+                await send_status({"state": "finishing"})
+                continue
+            payload = message.get("bytes", b"")
+            if len(payload) < 12 or len(payload) > 2 * 1024 * 1024:
+                raise ValueError("Invalid preview frame size")
+            ts = struct.unpack("<d", payload[:8])[0]
+            image = payload[8:]
+            if not math.isfinite(ts) or ts < 0 or not image.startswith(b"\xff\xd8") or not image.endswith(b"\xff\xd9"):
+                raise ValueError("Invalid preview frame")
+            status = await asyncio.to_thread(live_manager.submit_frame, session_id, token, ts, image)
+            await send_status(status)
+    except WebSocketDisconnect:
+        pass
+    except (KeyError, ValueError, TypeError, asyncio.TimeoutError):
+        await socket.close(code=1008)
+    finally:
+        if publisher is not None:
+            publisher.cancel()
+            try:
+                await publisher
+            except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+                pass
+
+
+@app.get("/live-sessions/{session_id}/frames")
+def live_frames(session_id: str):
+    get_live_session(session_id)
+    return StreamingResponse(live_manager.frames(session_id),
+                             media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.get("/live-sessions/{session_id}/source")
+def live_source_video(session_id: str):
+    try:
+        return FileResponse(live_manager.source_path(session_id))
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(404, "Source recording is unavailable.") from exc
+
+
+@app.get("/live-sessions/{session_id}/playback")
+def live_playback_source(session_id: str):
+    try:
+        return FileResponse(live_manager.playback_path(session_id))
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(404, "Playback source is unavailable.") from exc

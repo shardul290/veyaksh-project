@@ -65,17 +65,18 @@ function paintDetections(mediaTime) {
   if(ts===undefined||mediaTime-ts>.25)return;
   const source=analysis.frame_size, scale=Math.min(rect.width/source.width,rect.height/source.height);
   const dx=(rect.width-source.width*scale)/2,dy=(rect.height-source.height*scale)/2;
-  ctx.font="11px system-ui, sans-serif";ctx.lineWidth=1;
+  ctx.font="9px system-ui, sans-serif";ctx.lineWidth=1;
   for(const row of frames.get(ts)) {
     const unsafe=row.path?.status==="wrong_path" || analysis.events.some(e=>e.track_id===row.track_id&&mediaTime>=e.video_ts_s&&mediaTime-e.video_ts_s<=2);
     const color=unsafe?"#ff5858":row.class==="pedestrian"?"#48df86":"#71c9ef";
     const [x1,y1,x2,y2]=row.bbox, x=x1*scale+dx,y=y1*scale+dy,w=(x2-x1)*scale,h=(y2-y1)*scale;
     ctx.strokeStyle=color;ctx.globalAlpha=.85;ctx.strokeRect(x,y,w,h);ctx.globalAlpha=1;
-    const suffix=unsafe?(row.class==="pedestrian"?" · wrong path":" · alert"):row.path?.status==="right_path"?" · right path":"";
-    const label=`#${row.track_id??"?"} ${row.class}${suffix}`, textWidth=ctx.measureText(label).width;
-    const left=Math.max(0,Math.min(rect.width-textWidth-6,x)), top=Math.max(0,y-17);
-    ctx.fillStyle="rgba(8,18,29,.28)";ctx.fillRect(left,top,textWidth+6,16);
-    ctx.fillStyle=color;ctx.fillText(label,left+3,top+12);
+    const displayClass=row.class==="pedestrian"?"ped":row.class;
+    const suffix=unsafe?(row.class==="pedestrian"?" · WP":" · alert"):row.path?.status==="right_path"?" · right":"";
+    const label=`#${row.track_id??"?"} ${displayClass}${suffix}`, textWidth=ctx.measureText(label).width;
+    const left=Math.max(0,Math.min(rect.width-textWidth-4,x)), top=Math.max(0,y-14);
+    ctx.fillStyle="rgba(8,18,29,.18)";ctx.fillRect(left,top,textWidth+4,13);
+    ctx.fillStyle=color;ctx.fillText(label,left+2,top+10);
   }
 }
 

@@ -16,12 +16,17 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import struct
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
+import numpy as np
 import torch
 from m3_events.event_engine import load_zones, read_json
 from m3_events.playback import draw_detection
@@ -37,6 +42,79 @@ COCO_TO_TARGET = {
     "car": "car", "bus": "bus_truck", "truck": "bus_truck",
     "person": "pedestrian",
 }
+GST_WORKER = Path(__file__).with_name("gstreamer_decode_worker.py")
+GST_FRAME_HEADER = struct.Struct("<QqII")
+
+
+def read_exact(stream, byte_count: int) -> bytearray | None:
+    """Read one complete item from the GStreamer worker's framed stdout."""
+    chunks = bytearray()
+    while len(chunks) < byte_count:
+        chunk = stream.read(byte_count - len(chunks))
+        if not chunk:
+            return chunks if chunks else None
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def iter_gstreamer_frames(video: Path | str, gst_python: Path, expected_size: tuple[int, int], *,
+                          realtime: bool = False,
+                          output_size: tuple[int, int] | None = None,
+                          on_process=None):
+    """Yield decoded frames from the GStreamer/PyGObject worker process."""
+    if isinstance(video, str) and video.lower().startswith(("rtsp://", "rtsps://")):
+        command = [str(gst_python), str(GST_WORKER), "--uri", video]
+    else:
+        video_path = Path(video)
+        command = [str(gst_python), str(GST_WORKER), "--video", str(video_path)]
+    if realtime:
+        command.append("--realtime")
+    if output_size is not None:
+        command.extend(["--output-width", str(output_size[0]),
+                        "--output-height", str(output_size[1])])
+    ucrt_prefix = gst_python.resolve().parent.parent
+    ucrt_bin = ucrt_prefix / "bin"
+    worker_env = os.environ.copy()
+    worker_env["PATH"] = str(ucrt_bin) + os.pathsep + worker_env.get("PATH", "")
+    for variable, extra_path in (
+        ("GI_TYPELIB_PATH", ucrt_prefix / "lib" / "girepository-1.0"),
+        ("GST_PLUGIN_PATH", ucrt_prefix / "lib" / "gstreamer-1.0"),
+    ):
+        existing = worker_env.get(variable)
+        worker_env[variable] = str(extra_path) + (os.pathsep + existing if existing else "")
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=worker_env
+    )
+    if on_process is not None:
+        on_process(process)
+    assert process.stdout is not None
+    expected_width, expected_height = expected_size
+    try:
+        while True:
+            header = read_exact(process.stdout, GST_FRAME_HEADER.size)
+            if header is None:
+                break
+            if len(header) != GST_FRAME_HEADER.size:
+                raise RuntimeError("GStreamer decoder stopped in the middle of a frame header")
+            source_index, pts_ns, width, height = GST_FRAME_HEADER.unpack(header)
+            if (width, height) != (expected_width, expected_height):
+                raise RuntimeError(
+                    f"GStreamer decoded {width}x{height}, expected {expected_width}x{expected_height}"
+                )
+            pixels = read_exact(process.stdout, width * height * 3)
+            if pixels is None or len(pixels) != width * height * 3:
+                raise RuntimeError(f"GStreamer decoder stopped during source frame {source_index}")
+            frame = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 3)
+            source_ts = pts_ns / 1_000_000_000 if pts_ns >= 0 else None
+            yield int(source_index), source_ts, frame
+        return_code = process.wait()
+        if return_code:
+            raise RuntimeError(f"GStreamer decoder worker exited with code {return_code}; see its stderr output")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait()
+        process.stdout.close()
 
 
 def normalize_names(names: object) -> dict[int, str]:
@@ -61,6 +139,11 @@ def main() -> None:
     parser.add_argument("--rotate-180", action="store_true",
                         help="Correct an upside-down processing proxy after decoding; leave unset for the original camera recording")
     parser.add_argument("--stride", type=int, default=1, help="Process every Nth source frame")
+    parser.add_argument("--decoder", choices=("ffmpeg", "gstreamer"), default="ffmpeg",
+                        help="Video decoder; GStreamer uses the separate PyGObject worker")
+    parser.add_argument("--gstreamer-python", type=Path,
+                        default=Path(os.environ["GST_PYTHON"]) if os.environ.get("GST_PYTHON") else None,
+                        help="MSYS2 UCRT64 Python containing PyGObject/GStreamer (or set GST_PYTHON)")
     args = parser.parse_args()
 
     if args.stride < 1 or args.imgsz < 32 or args.cpu_threads < 1 or not 0 <= args.conf <= 1:
@@ -70,6 +153,13 @@ def main() -> None:
         parser.error(f"Video not found: {args.video}")
     if not args.model.is_file():
         parser.error(f"Model checkpoint not found: {args.model}")
+    if args.decoder == "gstreamer":
+        if args.gstreamer_python is None:
+            parser.error("GStreamer mode requires --gstreamer-python or the GST_PYTHON environment variable")
+        if not args.gstreamer_python.is_file():
+            parser.error(f"GStreamer Python interpreter not found: {args.gstreamer_python}")
+        if not GST_WORKER.is_file():
+            parser.error(f"GStreamer worker is missing: {GST_WORKER}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(str(args.video))
@@ -80,6 +170,8 @@ def main() -> None:
     cap.release()
     if fps <= 0:
         parser.error(f"Could not read a valid FPS from {args.video}")
+    if args.decoder == "gstreamer" and args.stride != 1:
+        print("Note: GStreamer decodes every source frame; --stride only skips model inference.", flush=True)
 
     path_rule = None
     zone_config = None
@@ -137,6 +229,29 @@ def main() -> None:
     try:
         with args.output.open("w", encoding="utf-8") as out:
             def tracked_frames():
+                if args.decoder == "gstreamer":
+                    first_pts_s = None
+                    for source_index, source_ts, frame in iter_gstreamer_frames(
+                        args.video.resolve(), args.gstreamer_python, (frame_width, frame_height)
+                    ):
+                        if source_index % args.stride:
+                            continue
+                        if args.rotate_180:
+                            frame = cv2.rotate(frame, cv2.ROTATE_180)
+                        if source_ts is None:
+                            source_ts = source_index / fps
+                        else:
+                            if first_pts_s is None:
+                                first_pts_s = source_ts
+                            source_ts = max(0.0, source_ts - first_pts_s)
+                        result = model.track(source=frame, tracker="bytetrack.yaml", persist=True,
+                                             verbose=False, device=args.device, imgsz=args.imgsz,
+                                             conf=args.conf, classes=sorted(class_map))[0]
+                        if args.device == "cpu":
+                            torch.set_num_threads(args.cpu_threads)
+                        yield source_index, source_ts, result
+                    return
+
                 # Own the decoder to bound 4K buffering and retain true source
                 # frame indices even when inference samples every Nth frame.
                 capture = cv2.VideoCapture(str(args.video), cv2.CAP_FFMPEG,
@@ -167,6 +282,7 @@ def main() -> None:
                 finally:
                     capture.release()
 
+            inference_started = time.perf_counter()
             for frame_index, source_ts, result in tracked_frames():
                 processed += 1
                 if annotated_writer is not None:
@@ -210,17 +326,22 @@ def main() -> None:
                 write_annotated()
                 if processed % 50 == 0:
                     print(f"Processed {processed} sampled frames; wrote {rows_written} detections", flush=True)
+            elapsed_s = time.perf_counter() - inference_started
     finally:
         if annotated_writer is not None:
             annotated_writer.release()
 
-    print(f"Done: {args.video} | sampled frames={processed} | detections={rows_written} | output={args.output}")
+    throughput = processed / elapsed_s if elapsed_s > 0 else 0.0
+    print(f"Done: {args.video} | decoder={args.decoder} | sampled frames={processed} "
+          f"| detections={rows_written} | elapsed={elapsed_s:.1f}s "
+          f"| pipeline throughput={throughput:.2f} frames/s | output={args.output}")
     source_stat = args.video.stat()
     metadata_path.write_text(json.dumps({
         "complete": frame_count > 0 and processed >= frame_count // args.stride,
         "source_size": source_stat.st_size,
         "source_mtime_ns": source_stat.st_mtime_ns, "frame_count": frame_count,
         "fps": fps, "stride": args.stride, "processed_frames": processed,
+        "decoder": args.decoder, "elapsed_s": round(elapsed_s, 3),
         "rotation_applied_deg": 180 if args.rotate_180 else 0,
     }), encoding="utf-8")
     if args.annotated_output:
