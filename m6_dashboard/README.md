@@ -1,5 +1,34 @@
 # VEYAKSH traffic operations dashboard
 
+## Live YOLO26 monitoring
+
+Run `./start_dashboard.ps1` from the project folder and open `http://127.0.0.1:8000/`. In **Traffic in motion**, choose a project video or enter a full local video path or RTSP URL. Select the matching camera and calibrated zones, then click **Start analysis**. Click **Stop** before changing the source. The selected model is `models/yolo26s_traffic.onnx`.
+
+On first use of a local file, FFmpeg prepares a cached H.264 playback copy at up to 960 pixels and 25 FPS. Preparation can take time for long 4K footage; its status appears in the dashboard. Later sessions reuse it. Copies live in `runs/live_previews/` and are regenerated if the original changes. The original source remains the evidence link. Install `requirements.txt` to include the bundled FFmpeg runtime. Playback pauses automatically when its source clock is more than 700 ms ahead of completed detection, then resumes when the detector catches up. This bounds the pending work under load; it can reduce playback speed on slow hardware.
+
+Local files decode in the browser at their source timing. The playback tab sends 960-pixel JPEG samples over a WebSocket to one YOLO26/ByteTrack worker. The visible canvas buffers up to 32 video frames and uses an adaptive presentation delay (normally a fraction of a second). Frames and boxes share a source timestamp; the display waits when inference falls behind. Positions interpolate only between detections of the same confirmed track, without predicting future positions. Keep the playback tab open while monitoring. Other viewers share the worker's preview, whose frames are annotated with their own detections. Detection speed depends on laptop load and can be lower than playback speed.
+
+Completed detections are pushed independently of frame uploads. ONNX Runtime uses sequential execution and two CPU threads alongside DirectML where available. The tracker uses confidence thresholds appropriate to the selected detector threshold. Valid detections remain visible while awaiting a track ID, and only confirmed tracks enter event rules. This preserves detector output without claiming to recover objects the model did not detect.
+
+RTSP input runs in the backend, using the installed GStreamer worker. If the native decoder fails before receiving a frame, the session switches to FFmpeg and displays a warning. Set `GST_PYTHON` to the GStreamer-capable Python interpreter when using a different installation. See [GStreamer setup](../GSTREAMER_SETUP.md).
+
+The existing wrong-way, encroachment and pedestrian-path rules evaluate tracked detections as they arrive. Confirmed events save to SQLite immediately with a snapshot, source time and review status. Local-file evidence links back to its original video. RTSP evidence contains the captured snapshot. A new session has a new event identity, while multiple viewers of one session share event identities.
+
+The live controls show playback FPS, detection FPS, display delay, saved events and the active decoder/inference provider. One source runs at a time on this laptop. Each session stores diagnostic status and tracks in `runs/live_sessions/<session_id>/`, and evidence snapshots in `m6_backend/media/event_evidence/live/`. The session logs and configuration files are local runtime data.
+
+### Live API
+
+- `GET /live-options` lists cameras, calibrations and project video paths.
+- `POST /live-sessions` starts a local-file or RTSP session.
+- `GET /live-sessions` and `GET /live-sessions/{id}` report current sessions and telemetry.
+- `POST /live-sessions/{id}/stop` stops the owned source and inference processes.
+- `GET /live-sessions/{id}/frames` serves the shared annotated MJPEG preview.
+- `GET /live-sessions/{id}/source` serves the unchanged original local file for playback and evidence.
+- `GET /live-sessions/{id}/playback` serves the cached lightweight local playback copy.
+- `WS /live-sessions/{id}/input` accepts timestamped preview frames from the playback owner.
+
+For browser input, the start response supplies a session-scoped `input_token`. Send it in the first WebSocket JSON message as `{"token": "..."}`. Subsequent binary messages contain an eight-byte little-endian float64 source timestamp followed by a JPEG. The worker retains the newest frame. Regular session responses omit the token. The dashboard manages this automatically.
+
 Pedestrian path labels and video-time event popups are now supported for prepared camera recordings. See [playback setup and behavior](../m3_events/PEDESTRIAN_PATH.md#video-time-alerts-in-the-dashboard). The monitored video keeps playing while a non-modal alert appears; encountering an event saves it once to the evidence trail.
 
 For manual startup, run `start_dashboard.ps1` from the project root in PowerShell.
@@ -19,23 +48,31 @@ an older backend after updating this code. The API and dashboard share an origin
 
 ## New surveyed recordings
 
-Add browser-compatible H.264 MP4 files at these exact paths:
+Put browser-compatible H.264 MP4 files under
+`m6_backend/media/camera_recordings/`, then register them in
+`configs/cameras.json`. Each camera entry has a `node_id`, a unique `cam_id`, a
+display `name`, and one or more labeled recordings. Several camera entries can
+share one location; clicking that map dot lists all cameras and recordings for
+the location.
 
-- `m6_backend/media/camera_recordings/point_1.mp4`: N01 / C01,
-  29°51'50.2"N 77°53'43.5"E.
-- `m6_backend/media/camera_recordings/point_2.mp4`: N02 / C02,
-  29°51'53.8"N 77°54'03.0"E.
+Use the location-and-angle label as the camera display name and filename, for
+example `1.1.mp4`, `1.2.mp4`, and `2.2.mp4`. Keep the backend `cam_id` unique;
+Point 1 angle 2 can use `C03` while remaining under node `N01`.
 
-The CCTV panel discovers added recordings within two seconds without a restart.
-Click either blue map marker or the corresponding camera selector. The separate
-video upload button has been removed. `configs/cameras.json` supports multiple
-saved recordings per camera; set the actual timezone-aware `start_ts` when known.
-See `m6_backend/media/camera_recordings/README.md` for more details.
+The Point 1 marker currently offers three saved annotated renders. Each
+recording is served locally; no copy is sent to an external service. Set
+`annotated: true` for videos that already contain rendered boxes or labels.
+
+The CCTV panel discovers camera and recording changes within two seconds
+without a restart. Location dots are loaded from `configs/locations.json`; add
+future locations there and refresh the dashboard to show their dots. Set the
+actual timezone-aware `start_ts` when known. See
+`m6_backend/media/camera_recordings/README.md` for details.
 
 The old clips are invalid for these surveyed locations. On first upgrade,
 existing events become archived legacy records in History. They do not activate
 the new camera pins, appear in the evidence queue, or expose their old footage.
-No historical records are deleted. Only the two surveyed nodes appear on the map.
+No historical records are deleted. Only configured locations appear on the map.
 
 ## Analyse and publish events
 

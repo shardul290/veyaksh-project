@@ -1,34 +1,77 @@
-# GStreamer development setup (Windows)
+# GStreamer setup for video processing (Windows)
 
-This development system has GStreamer 1.28.8 installed. The official MSVC x86_64 distribution is at:
+The video pipeline runs YOLO from the project's `.venv` and launches a small GStreamer/PyGObject decoder worker from MSYS2 UCRT64 Python. The two Python environments stay separate. The project's normal PyPI OpenCV wheel does not need a GStreamer backend.
 
-```text
-%LOCALAPPDATA%\Programs\gstreamer\1.0\msvc_x86_64
-```
+## 1. Install MSYS2
 
-The installer configured `GSTREAMER_1_0_ROOT_MSVC_X86_64` and added its `bin` directory to the user PATH. It includes the core, base/good/bad plugin libraries, and the RTSP server runtime and development libraries.
+If `C:\msys64\ucrt64\bin\python.exe` is missing, install [MSYS2](https://www.msys2.org/) using the default `C:\msys64` location. Open **MSYS2 UCRT64** from the Start menu; do not use the plain MSYS2 shell for these packages.
 
-## Python and OpenCV environment
+## 2. Update MSYS2 and install GStreamer
 
-The project's existing `.venv` uses the standard `opencv-python` wheel, whose build has GStreamer disabled. For Python GObject and OpenCV with a working GStreamer backend, use the MSYS2 **UCRT64** environment. The UCRT64 package set installed on this system contains:
-
-- GStreamer core, base, good and bad plugins
-- `gst-rtsp-server` and the Python GStreamer bindings
-- Python GObject bindings (`python-gobject`)
-- Python OpenCV (`python-opencv`), built with GStreamer video I/O
-
-Open **MSYS2 UCRT64** from the Start menu. Avoid mixing its DLLs with the separate MSVC installation; the UCRT64 shell selects the matching libraries automatically. To check the stack:
+In the **MSYS2 UCRT64** terminal, run:
 
 ```bash
-python -c 'import gi, cv2; gi.require_version("Gst", "1.0"); gi.require_version("GstRtspServer", "1.0"); from gi.repository import Gst, GstRtspServer; Gst.init(None); print(gi.__version__, Gst.version_string(), GstRtspServer.RTSPServer.__name__, cv2.__version__)'
+pacman -Suy
 ```
 
-To verify OpenCV can receive frames through GStreamer:
+If the update closes the terminal, open **MSYS2 UCRT64** again and run `pacman -Suy` until it reports that the environment is up to date. MSYS2 uses rolling updates and recommends full upgrades. [MSYS2 update guide](https://www.msys2.org/docs/updating/)
+
+Then install Python, PyGObject, GStreamer, the video plugins, and the FFmpeg decoder plugin:
 
 ```bash
-python -c 'import cv2; cap=cv2.VideoCapture("videotestsrc num-buffers=2 ! videoconvert ! video/x-raw,format=BGR ! appsink", cv2.CAP_GSTREAMER); ok, frame=cap.read(); print("backend:", cap.getBackendName() if cap.isOpened() else "closed", "frame:", ok, None if frame is None else frame.shape); cap.release(); raise SystemExit(0 if ok else 1)'
+pacman -S \
+  mingw-w64-ucrt-x86_64-python \
+  mingw-w64-ucrt-x86_64-python-gobject \
+  mingw-w64-ucrt-x86_64-gstreamer \
+  mingw-w64-ucrt-x86_64-gst-python \
+  mingw-w64-ucrt-x86_64-gst-plugins-base \
+  mingw-w64-ucrt-x86_64-gst-plugins-good \
+  mingw-w64-ucrt-x86_64-gst-plugins-bad \
+  mingw-w64-ucrt-x86_64-gst-libav
 ```
 
-The synthetic source should report the `GSTREAMER` backend and a `(240, 320, 3)` frame. Use this Python environment for code that needs GStreamer; installing the PyPI `opencv-python` package into it would replace the GStreamer-enabled OpenCV build.
+MSYS2's UCRT64 environment uses packages with the `mingw-w64-ucrt-x86_64-` prefix. [MSYS2 environments and package names](https://www.msys2.org/docs/environments/), [PyGObject package](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-python-gobject), [GStreamer packages](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gstreamer)
 
-The current `test_rtsp.py` checks a MediaMTX RTSP stream through OpenCV's FFmpeg backend. It remains suitable for the project's RTSP continuity check and is separate from the synthetic GStreamer-backend check above.
+## 3. Confirm the UCRT64 Python can load GStreamer
+
+Still in **MSYS2 UCRT64**, run:
+
+```bash
+python -c 'import gi; gi.require_version("Gst", "1.0"); gi.require_version("GstVideo", "1.0"); from gi.repository import Gst, GstVideo; Gst.init(None); print("GStreamer:", Gst.version_string(), "GstVideo:", GstVideo.VideoInfo.__name__)'
+```
+
+It should print the GStreamer version and `GstVideo: VideoInfo`. Find the matching Windows interpreter path:
+
+```bash
+cygpath -w "$(command -v python)"
+```
+
+The default path is `C:\msys64\ucrt64\bin\python.exe`. Keep this UCRT64 installation separate from any MSVC GStreamer runtime; the processing command uses the UCRT64 Python and plugin libraries.
+
+## 4. Run a 1.1 pilot from VS Code
+
+Open a PowerShell terminal in VS Code at the project root. Set `$gstPython` to the Windows path printed above, then run:
+
+```powershell
+$gstPython = "C:\msys64\ucrt64\bin\python.exe"
+Test-Path $gstPython
+& $gstPython -c "import gi; gi.require_version('Gst','1.0'); gi.require_version('GstVideo','1.0'); from gi.repository import Gst, GstVideo; Gst.init(None); print(Gst.version_string(), GstVideo.VideoInfo.__name__)"
+```
+
+The first command should print `True`; the second should print the GStreamer version and `VideoInfo`. Then activate the project environment and run the comparison preview:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m m3_events.run_video_pipeline `
+  --video data/incoming/1.1.mp4 `
+  --model models/best.pt `
+  --zones configs/zones/C01.json `
+  --output-dir runs/1.1_gstreamer `
+  --annotated-output runs/1.1_gstreamer/1.1_annotated_compact.mp4 `
+  --device cpu --imgsz 640 --conf 0.15 --stride 1 `
+  --decoder gstreamer --gstreamer-python $gstPython
+```
+
+The worker adds the UCRT64 DLL, typelib, and plugin directories based on `$gstPython`. It decodes and streams every frame with its timestamp; the model still runs on the project's `.venv`. The output settings keep 1.1's full frame sampling and compact overlay. Compare the generated preview and the elapsed time printed by the exporter before processing the remaining clips.
+
+GStreamer can accelerate decoding only when a compatible hardware decoder plugin and device are available. `uridecodebin` selects from the installed decoders, so hardware acceleration is not guaranteed. YOLO inference remains on the device selected by `--device`; GStreamer will not move CPU inference onto a GPU. [GStreamer `uridecodebin`](https://gstreamer.freedesktop.org/documentation/playback/uridecodebin.html)

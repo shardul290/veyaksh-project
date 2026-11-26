@@ -13,6 +13,9 @@ assets/rtsp_inputs/*
 *.avi
 *.mkv
 *.webm
+*.wmv
+*.mpeg
+*.mpg
 
 # Event-frame extracts and short event evidence clips are local data products
 m6_backend/media/event_evidence/
@@ -22,6 +25,9 @@ assets/extracted_frames/
 assets/raw_videos/
 raw_videos/
 extracted_frames/
+**/frames/
+**/extracted_frames/
+**/frame_extractions/
 datasets/
 VEYAKSH_TRAFFIC_DATASET*/
 
@@ -33,15 +39,16 @@ VEYAKSH_TRAFFIC_DATASET*/
 
 # Private TLS key
 auto.key
-
-# Runtime artifacts and local model checkpoints
-data/
-runs/
-tracks/
+# Runtime artifacts
 reports/
-*.pt
+runs/
 *.db-*
 *.sqlite3*
 .env
 .env.*
 !.env.example
+
+# Downloaded baselines and pretrained weights
+models/best.pt
+models/best.onnx
+models/yolo26s.pt

@@ -36,11 +36,13 @@ def scaled_dimensions(width: int, height: int, max_dimension: int) -> tuple[int,
     return out_width, out_height
 
 
-def make_pipeline(source: Path, width: int, height: int, fps: int, bitrate: int) -> str:
+def make_pipeline(source: Path, width: int, height: int, fps: int, bitrate: int,
+                  download_d3d12: bool = True) -> str:
     uri = source.as_uri().replace('"', "%22")
+    download = "! d3d12download " if download_d3d12 else ""
     return (
         f'( uridecodebin uri="{uri}" '
-        f"! queue ! d3d12download ! videoconvert ! videoscale ! videorate "
+        f"! queue {download}! videoconvert ! videoscale ! videorate "
         f"! video/x-raw,width={width},height={height},framerate={fps}/1 "
         f"! identity sync=true "
         f"! x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
@@ -77,7 +79,16 @@ def main() -> int:
         LOG.error("Could not inspect input video %s: %s", source, exc)
         return 1
     width, height = scaled_dimensions(input_width, input_height, args.max_dimension)
-    launch = make_pipeline(source, width, height, args.fps, args.bitrate)
+    # d3d12download only accepts D3D12-backed frames. If this GStreamer build
+    # has no D3D12 H.264 decoder, uridecodebin uses a software decoder instead,
+    # so pass those system-memory frames directly to videoconvert.
+    has_d3d12_h264_decoder = Gst.ElementFactory.find("d3d12h264dec") is not None
+    if has_d3d12_h264_decoder:
+        LOG.info("D3D12 H.264 decoder found; enabling d3d12download")
+    else:
+        LOG.info("No D3D12 H.264 decoder found; using software-compatible video conversion")
+    launch = make_pipeline(source, width, height, args.fps, args.bitrate,
+                           download_d3d12=has_d3d12_h264_decoder)
 
     factory = GstRtspServer.RTSPMediaFactory()
     factory.set_launch(launch)
