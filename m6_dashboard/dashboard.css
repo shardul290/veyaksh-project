@@ -16,3 +16,4 @@ button.camera-presence:hover{border-color:#7796bd;background:#f1f6fc}
 @media(max-width:700px){.playback-alerts{left:16px;bottom:16px}}
 
 .camera-playback-actions{align-items:center;gap:8px;flex-wrap:wrap}.playback-time{font-size:11px;font-variant-numeric:tabular-nums;margin-right:auto;color:#66758a}
+.camera-presence.selected{border-color:#7da7ff;background:#eef4ff}.camera-presence.selected strong{color:#245dc8}.camera-status.missing{background:#f2f4f7;color:#75808f}.recordings{padding-top:4px}.recording-group{border-top:1px solid var(--border);padding:10px 0 2px}.recording-group h3{margin:0 0 8px;font-size:11px;color:#526176}.recording-options{display:grid;gap:7px}.recording-option{width:100%;text-align:left;font-size:11px;padding:9px 11px}.recording-option.selected{border-color:#7da7ff;background:#eef4ff;color:#245dc8}.recording-empty{font-size:11px;color:var(--muted);margin:5px 0 8px}.camera-selector .camera-presence{min-height:54px}

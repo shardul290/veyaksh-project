@@ -1,0 +1,52 @@
+.live-panel{margin-bottom:24px}
+.live-heading{padding:20px 24px}
+.live-heading .eyebrow{display:block;margin-bottom:7px}
+.live-heading h2{font-size:22px}
+.live-state{border-radius:20px;background:#edf1f5;color:#58677b;padding:8px 13px;font-size:13px;font-weight:600}
+.live-state[data-state=running]{background:#e3f5ed;color:#207451}
+.live-state[data-state=failed]{background:#fff0f0;color:#ad3444}
+.live-state[data-state=starting],.live-state[data-state=stopping]{background:#fff4de;color:#8c651d}
+.live-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px}
+.live-view{min-width:0;background:#0d1827;padding:16px}
+.live-stage{aspect-ratio:16/9;position:relative;display:grid;place-items:center;overflow:hidden;background:#080f1b;border:1px solid #223247;border-radius:8px}
+.live-stage>img{width:100%;height:100%;object-fit:contain;display:block}
+.live-empty{padding:30px;text-align:center;color:#9dafc5;max-width:460px}
+.live-empty strong{display:block;font-size:23px;color:#e3ebf7;margin:15px 0}
+.live-empty p{font-size:14px;line-height:1.7}
+.live-empty .camera-glyph{font-size:42px;color:#6484af}
+.live-clockbar{display:flex;align-items:center;gap:8px;padding:12px 2px;color:#c5d2e4;font-size:14px;font-variant-numeric:tabular-nums}
+.live-clockbar small{margin-left:auto;color:#9fb2cb;font-size:12px}
+.live-clockbar span{color:#8fa2bc}
+.live-controls{padding:20px;border-left:1px solid var(--border);display:flex;flex-direction:column;gap:18px}
+.live-controls label{display:grid;gap:7px;color:#43536b;font-size:14px;line-height:1.5}
+.live-controls input,.live-controls select{width:100%;margin:0;padding:10px 11px;font:inherit;color:#243245;border:1px solid #ccd6e2;background:#fff;border-radius:6px;min-width:0}
+.live-controls input:focus-visible{outline:3px solid #b7ceff;outline-offset:1px}
+.live-controls input:disabled,.live-controls select:disabled{background:#f4f6f9}
+.live-controls small{font-size:12px;color:#788698}
+.live-buttons{display:flex;gap:8px}
+.live-buttons button{flex:1;font-size:14px}
+.live-model{border-top:1px solid var(--border);padding-top:16px;line-height:1.7}
+.live-model span{display:block;font-size:12px;color:var(--muted)}
+.live-model strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.live-telemetry{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.live-telemetry>div{padding:16px 24px;border-right:1px solid var(--border)}
+.live-telemetry>div:last-child{border-right:0}
+.live-telemetry dt{font-size:13px;margin-bottom:8px}
+.live-telemetry dd{font-size:23px;font-weight:650;color:#293c57;font-variant-numeric:tabular-nums}
+.live-footer{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 24px}
+.live-footer p{font-size:13px;color:#63768e;line-height:1.6}
+#live-error:empty{display:none}
+#live-error{margin:0 24px 15px;padding:12px;color:#ac3444;background:#fff2f2;font-size:14px;border-radius:5px;overflow-wrap:anywhere}
+.live-events{padding:0 24px 20px}
+.live-event-list{display:flex;gap:10px;overflow-x:auto}
+.live-event-list>.muted{margin:0;font-size:13px}
+.live-event{min-width:220px;text-align:left;display:grid;gap:7px;background:#fff8f3;border-color:#efdad1}
+.live-event strong{font-size:13px;color:#a24e35}
+.live-event span{font-size:12px;font-weight:400}
+@media(max-width:1200px){.live-layout{grid-template-columns:minmax(0,1fr) 270px}.live-controls{padding:16px;gap:12px}.live-heading{padding:18px}}
+@media(max-width:850px){.live-layout{grid-template-columns:1fr}.live-controls{border-left:0;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr}.live-source-field{grid-column:1/-1}.live-model{grid-column:1/-1}.live-telemetry>div{padding:13px}.live-footer{align-items:flex-start;flex-direction:column;gap:0}}
+@media(max-width:520px){.live-controls{grid-template-columns:1fr}.live-source-field,.live-model{grid-column:auto}.live-telemetry{grid-template-columns:1fr 1fr}.live-heading h2{font-size:19px}.live-clockbar{flex-wrap:wrap}.live-clockbar small{width:100%;margin-left:0}.live-telemetry dd{font-size:20px}}
+
+.live-stage>video{width:100%;height:100%;object-fit:contain;display:block}.live-stage>canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#live-video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#live-overlay{object-fit:contain}

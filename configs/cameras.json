@@ -1,4 +1,20 @@
 [
-  {"node_id": "N01", "cam_id": "C01", "recordings": [{"label": "Point 1 recording", "path": "camera_recordings/point_1.mp4", "start_ts": null}]},
-  {"node_id": "N02", "cam_id": "C02", "recordings": [{"label": "Point 2 recording", "path": "camera_recordings/point_2.mp4", "start_ts": null}]}
+  {
+    "node_id": "N01",
+    "cam_id": "C01",
+    "name": "1.1",
+    "recordings": [
+      {"label": "Annotated full · high quality", "path": "camera_recordings/point_1_annotated_c01_h264_full.mp4", "start_ts": null, "annotated": true},
+      {"label": "Annotated review render", "path": "camera_recordings/point_1_annotated.mp4", "start_ts": null, "annotated": true},
+      {"label": "Annotated compact render", "path": "camera_recordings/point_1_annotated_c01_compact_full.mp4", "start_ts": null, "annotated": true}
+    ]
+  },
+  {
+    "node_id": "N02",
+    "cam_id": "C02",
+    "name": "2.2",
+    "recordings": [
+      {"label": "Point 2 recording", "path": "camera_recordings/point_2.mp4", "start_ts": null}
+    ]
+  }
 ]

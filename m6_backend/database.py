@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from contextlib import closing
@@ -39,10 +40,30 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
-CAMERA_NODES = (
-    ("N01", "Point 1", 29 + 51/60 + 50.2/3600, 77 + 53/60 + 43.5/3600),
-    ("N02", "Point 2", 29 + 51/60 + 53.8/3600, 77 + 54/60 + 3/3600),
-)
+LOCATIONS_FILE = Path(__file__).resolve().parents[1] / "configs" / "locations.json"
+
+
+def load_camera_nodes() -> tuple[tuple[str, str, float, float], ...]:
+    """Load map locations from the editable project configuration."""
+    raw = json.loads(LOCATIONS_FILE.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"Expected a list of locations in {LOCATIONS_FILE}")
+    result = []
+    seen = set()
+    for location in raw:
+        if not isinstance(location, dict):
+            raise ValueError("Each location must be a JSON object")
+        node_id, name = location.get("node_id"), location.get("name")
+        if not isinstance(node_id, str) or not node_id or node_id in seen:
+            raise ValueError(f"Location node_id must be a unique non-empty string: {node_id!r}")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Location {node_id} must have a name")
+        lat, lon = float(location["lat"]), float(location["lon"])
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError(f"Location {node_id} has invalid coordinates")
+        seen.add(node_id)
+        result.append((node_id, name.strip(), lat, lon))
+    return tuple(result)
 
 _initialize_lock = threading.Lock()
 
@@ -93,7 +114,7 @@ def _initialize_database(db_path: Path | str = DB_PATH) -> Path:
             """INSERT INTO nodes (node_id, name, lat, lon) VALUES (?, ?, ?, ?)
                ON CONFLICT(node_id) DO UPDATE SET name = excluded.name,
                lat = excluded.lat, lon = excluded.lon""",
-            CAMERA_NODES,
+            load_camera_nodes(),
         )
 
     return path

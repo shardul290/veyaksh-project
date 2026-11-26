@@ -1,5 +1,7 @@
 # Video Ingest and Event Capture (M1 + M6)
 
+[Quick start: YOLO26 dashboard](README_QUICKSTART.md)
+
 A minimal Python 3.11 project that reads video frames with OpenCV and stores submitted events in SQLite through FastAPI.
 
 ## Setup (Windows PowerShell)
@@ -133,9 +135,28 @@ A two-wheeler enters the junction against the flow of traffic.
 **Input:** frames from M1.
 **Output:** for each frame, a list of objects: `track_id`, `class`, `bbox` (box position).
 **Why it exists:** events are about behaviour over time (direction, dwell). That needs identity, not just per-frame detection.
-**Tech:** the selected VEYAKSH YOLO11s `best.pt` checkpoint with Ultralytics ByteTrack for detection and tracking. Keep inference behind one adapter so the event rules consume a stable track format. `yolo11n.pt` remains the COCO baseline used for Task 2.7 comparison; its classes do not cover the full VEYAKSH taxonomy.
+**Tech:** the selected VEYAKSH YOLO26s `models/yolo26s_traffic.onnx` standard-head export with Ultralytics ByteTrack for detection and tracking. The dashboard, video preview and batch processor default to this model after held-out evaluation and visual review. Keep inference behind one adapter so the event rules consume a stable track format. `models/best.pt` and `models/best.onnx` are the YOLO11s baselines. `yolo11n.pt` is the COCO baseline used for Task 2.7 comparison; its classes do not cover the full VEYAKSH taxonomy.
 **Week 1:** run on the test video, save an overlay video (boxes + IDs), and list where Indian traffic breaks it (auto-rickshaw, e-rickshaw, cart, two-wheeler).
 **Done when:** overlay video exists and a failure list is written in `DECISIONS.md`.
+
+#### Train and compare YOLO26s
+
+Open [the YOLO26s training notebook](notebooks/train_yolo26s_traffic_colab.ipynb) in Colab, select a GPU runtime and run all cells. It reads the Task 2.6 dataset and the trained YOLO11s checkpoint from their existing Drive locations. Both models use the same 61 held-out frames from `muzaffarnagar_clip03` for comparison. Each training run writes its own `weights/best.pt`, end-to-end `weights/best.onnx`, per-class metrics and PyTorch validation timings under `MyDrive/TrafficDetection/results/yolo26s/`.
+
+If Drive sign-in fails, upload the prepared local `reports/yolo26_training_inputs.zip` to `/content` using the Colab Files sidebar before running the notebook. It detects the ZIP, uses its training data and weights, and downloads a results ZIP after evaluation. While the VM is active, checkpoints are also available under `/content/yolo26_results/`.
+
+The downloaded Colab run uses `models/yolo26s_traffic.pt` for its trained checkpoint and `models/yolo26s_traffic_e2e.onnx` for its NMS-free export. The local `models/yolo26s_traffic.onnx` uses the checkpoint's standard head with external non-maximum suppression. To reproduce that export with Ultralytics 8.4.197, run `yolo export model=models/yolo26s_traffic.pt format=onnx imgsz=640 batch=1 opset=17 dynamic=False simplify=False device=cpu`.
+
+Compare edge throughput by running both models on the same local clip. The exporter prints processed frames per second, including decoding and ByteTrack.
+
+```powershell
+python m2_detect_track/export_tracks_jsonl.py --video data/campus_clip.mp4 --kind veyaksh --model models/best.onnx --device cpu --output runs/compare/yolo11s.jsonl
+python m2_detect_track/export_tracks_jsonl.py --video data/campus_clip.mp4 --kind veyaksh --model models/yolo26s_traffic.onnx --device cpu --output runs/compare/yolo26s.jsonl
+```
+
+The selected standard-head export measured 4.86 FPS against YOLO11s at 4.09 FPS on a 60-frame campus sample, with mAP50–95 of 0.1281 against 0.1279 on 61 held-out frames. Its measured precision was lower at 0.1961 against 0.3874, while recall rose to 0.2505 from 0.2019. Pedestrian and cart performance still needs improvement.
+
+The dashboard defaults to `models/yolo26s_traffic.onnx`. Run `./start_dashboard.ps1` and open the printed URL. The `/health` response includes `detector_model` to identify the configured file. CLI tools accept a model through `--model`. To select the YOLO11s baseline for dashboard uploads, set `$env:VEYAKSH_MODEL = "models/best.pt"` before starting the backend.
 
 ### M3: Event engine (rule plugins)
 **What it does:** turns tracks plus zone config into events.

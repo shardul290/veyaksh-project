@@ -1,15 +1,31 @@
-# Surveyed camera recordings
+# Local camera recordings
 
-Add the new recordings to this folder using these exact filenames:
+Put browser-compatible H.264 MP4 files in this folder. Register each file in
+`configs/cameras.json`; its `path` is relative to `m6_backend/media`, for example
+`camera_recordings/point_1_view_a.mp4`. The dashboard filters out configured
+files that are not present yet.
 
-| File | Camera | Location |
-| --- | --- | --- |
-| `point_1.mp4` | N01 / C01 | 29°51'50.2"N 77°53'43.5"E (29.8639444444, 77.8954166667) |
-| `point_2.mp4` | N02 / C02 | 29°51'53.8"N 77°54'03.0"E (29.8649444444, 77.9008333333) |
+`configs/locations.json` defines the map dots. `configs/cameras.json` defines
+the cameras at those locations. Use one camera entry per physical camera or
+view, with a globally unique `cam_id`. Several entries can share a `node_id`.
+Use the location-and-angle label as the camera `name` and video filename, such
+as `1.1` for Point 1 / angle 1 and `1.2` for Point 1 / angle 2. Keep the
+technical `cam_id` unique (`C01`, `C03`, etc.) even when two views share a
+location.
+Put one or more `{ "label", "path", "start_ts" }` recording entries under a
+camera to offer multiple clips for that view. Set `annotated: true` when boxes
+or labels are already drawn into the video; the player then skips the live
+detection overlay. When a location has no recording yet, it still appears on
+the map and shows a “recordings on the way” state.
 
-Use browser-compatible H.264 MP4 video. The CCTV panel discovers the files
-automatically within two seconds, with no restart needed. Old demo clips are
-not linked to these cameras.
+Camera and recording changes appear in the dashboard automatically. After
+adding or changing a location in `configs/locations.json`, refresh the page to
+reload the map dots.
+
+The current Point 1 entry is labeled `1.1` and offers three saved annotated
+renders; Point 2 is labeled `2.2` and has one recording. More views can be
+added by placing files here and adding camera or recording entries to
+`configs/cameras.json`.
 
 Adding a recording makes it available for playback; detection is a separate
 step. Before publishing detector events, calibrate each camera's zones and set

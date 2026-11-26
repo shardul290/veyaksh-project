@@ -85,8 +85,8 @@ def draw_detection(frame, detection: dict[str, Any], alert: bool = False, text: 
     import cv2
 
     h, w = frame.shape[:2]
-    scale = max(.4, w / 1920 * .42)
-    thickness = max(1, round(w / 1920))
+    scale = max(.28, min(.34, w / 1920 * .48))
+    thickness = 1
     x1, y1, x2, y2 = [int(round(v)) for v in detection["bbox"]]
     x1, x2 = max(0, min(w - 1, x1)), max(0, min(w - 1, x2))
     y1, y2 = max(0, min(h - 1, y1)), max(0, min(h - 1, y2))
@@ -95,13 +95,14 @@ def draw_detection(frame, detection: dict[str, Any], alert: bool = False, text: 
     pedestrian = detection["class"] == "pedestrian"
     color = (65, 65, 235) if unsafe else (90, 210, 70) if pedestrian else (220, 180, 80)
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
-    label = f"#{detection.get('track_id') if detection.get('track_id') is not None else '?'} {detection['class']}"
+    object_class = "ped" if detection["class"] == "pedestrian" else detection["class"]
+    label = f"#{detection.get('track_id') if detection.get('track_id') is not None else '?'} {object_class}"
     if text:
         label = text
     elif unsafe:
-        label += " | WRONG PATH" if pedestrian else " | ALERT"
+        label += " | WP" if pedestrian else " | ALERT"
     elif status == "right_path":
-        label += " | right path"
+        label += " | right"
     elif pedestrian and status:
         label += " | " + status
     font = cv2.FONT_HERSHEY_SIMPLEX

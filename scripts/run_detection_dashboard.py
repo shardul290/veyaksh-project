@@ -69,7 +69,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", required=True, type=Path, help="Source video used for detection and evidence")
     parser.add_argument("--zones", required=True, type=Path, help="Calibrated camera zone JSON")
-    parser.add_argument("--model", type=Path, default=Path("models/best.pt"), help="YOLO11s checkpoint")
+    parser.add_argument("--model", type=Path, default=Path("models/yolo26s_traffic.onnx"), help="Trained VEYAKSH checkpoint or ONNX export")
     parser.add_argument("--tracks", type=Path, help="Reuse an existing ByteTrack JSONL and skip YOLO inference")
     parser.add_argument("--output-dir", type=Path, default=Path("runs/m3"))
     parser.add_argument("--device", default="cpu", help="Use cpu or a CUDA index such as 0")
